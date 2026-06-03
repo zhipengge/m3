@@ -7,9 +7,16 @@ export function resolveChannelPermissionMode(
   return agent.channelPermissionMode ?? "bypassPermissions";
 }
 
-export function agentConfigForChannel(agent: AgentConfig): AgentConfig {
+export function agentConfigForChannel(
+  agent: AgentConfig,
+  inbound?: { channelId?: string; peerId?: string },
+): AgentConfig {
+  const isTerminalRepl =
+    inbound?.channelId === "webchat" && inbound?.peerId === "terminal";
   return {
     ...agent,
-    permissionMode: resolveChannelPermissionMode(agent),
+    permissionMode: isTerminalRepl
+      ? agent.permissionMode
+      : resolveChannelPermissionMode(agent),
   };
 }

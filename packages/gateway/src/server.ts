@@ -12,6 +12,7 @@ import { registerBundledChannels } from "@m3/channel-extensions";
 import { loadM3PluginsFromConfig } from "@m3/plugin-sdk";
 import type { InboundMessage } from "@m3/channels";
 import type { M3Config } from "@m3/config";
+import { resolveAgentWorkspace } from "@m3/config";
 import { prepareInferenceBackend } from "@m3/local";
 import {
   GATEWAY_PROTOCOL_VERSION,
@@ -154,7 +155,7 @@ export class GatewayServer {
 
     writeGatewayPid(port, bind);
     this.eventLog.append("info", `gateway started ${bind}:${port}`);
-    const cwd = this.options.config.agent.cwd ?? process.cwd();
+    const cwd = resolveAgentWorkspace(this.options.config.agent);
     console.log(`[m3] workspace: ${cwd}`);
 
     return { url: `ws://${bind}:${port}` };
@@ -169,6 +170,10 @@ export class GatewayServer {
     await new Promise<void>((resolve) => {
       this.httpServer?.close(() => resolve());
     });
+  }
+
+  getPermissionBridge(): PermissionBridge {
+    return this.permissionBridge;
   }
 
   async dispatchInbound(message: InboundMessage): Promise<void> {

@@ -4,6 +4,8 @@ import type { ReplyDispatcher } from "@m3/channels";
 export type StreamAdapterOptions = {
   verboseTools?: boolean;
   chunkSize?: number;
+  onAssistantDelta?: (delta: string) => void;
+  onSystemNotice?: (text: string) => void;
 };
 
 export class StreamAdapter {
@@ -18,6 +20,7 @@ export class StreamAdapter {
     switch (event.type) {
       case "assistant_delta":
         this.buffer += event.delta;
+        this.options.onAssistantDelta?.(event.delta);
         break;
       case "assistant_message":
         this.buffer = event.text;
@@ -43,11 +46,12 @@ export class StreamAdapter {
           await this.dispatcher.startTyping?.();
         }
         break;
-      case "context_compressed":
-        await this.dispatcher.deliver({
-          text: `(context compressed: ${event.summarizedTurns} earlier turn(s) summarized, ${event.keptMessages} message(s) kept)`,
-        });
+      case "context_compressed": {
+        const msg = `(context compressed: ${event.summarizedTurns} earlier turn(s) summarized, ${event.keptMessages} message(s) kept)`;
+        this.options.onSystemNotice?.(msg);
+        await this.dispatcher.deliver({ text: msg });
         break;
+      }
       default:
         break;
     }

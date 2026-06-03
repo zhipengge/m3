@@ -74,11 +74,18 @@ async function runSingleTool(
     return { events };
   }
 
+  const input = block.input as Record<string, unknown> | undefined;
+  const pathHint =
+    typeof input?.file_path === "string"
+      ? input.file_path
+      : typeof input?.path === "string"
+        ? input.path
+        : undefined;
   const decision = await permissions.canUseTool({
     toolName: tool.name,
     isReadOnly: Boolean(tool.isReadOnly),
     needsPermission: Boolean(tool.needsPermission),
-    description: `Execute ${tool.name}`,
+    description: pathHint ? `${tool.name}: ${pathHint}` : `Execute ${tool.name}`,
     sessionKey: ctx.sessionId,
   });
 
@@ -97,7 +104,7 @@ async function runSingleTool(
       type: "tool_result",
       id: block.id,
       name: block.name,
-      output: `Permission denied (${tool.name}). Set agent.channelPermissionMode to bypassPermissions in ~/.m3/m3.json and restart gateway.`,
+      output: `Permission denied (${tool.name}). Approve when prompted, or set agent.permissionMode to acceptEdits in ~/.m3/m3.json.`,
       isError: true,
     });
     return { events };

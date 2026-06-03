@@ -15,6 +15,8 @@ _m3() {
     'webchat:Local webchat test REPL'
     'completion:Shell completion scripts'
     'local:Offline Qwen3-VL via llama.cpp'
+    'models:List available models'
+    'model:Show or set active model'
   )
 
   if (( CURRENT == 1 )); then

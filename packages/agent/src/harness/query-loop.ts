@@ -42,10 +42,13 @@ export async function* runQueryLoop(
     bashEnvAllow: options.bashEnvAllow,
   };
 
+  const workspaceBlock = `## Workspace\nRoot: ${options.cwd}\nUse workspace-relative paths for Read/Write/Edit/Glob/Bash.`;
   const base = options.planMode
     ? `${DEFAULT_SYSTEM_PROMPT}\n\nYou are in PLAN MODE. Do not modify files or run destructive commands. Propose a plan only.`
     : DEFAULT_SYSTEM_PROMPT;
-  const system = options.extraSystem ? `${base}\n\n${options.extraSystem}` : base;
+  const system = options.extraSystem
+    ? `${base}\n\n${workspaceBlock}\n\n${options.extraSystem}`
+    : `${base}\n\n${workspaceBlock}`;
   const toolDefs = tools.map(toolToAnthropicDef);
   const toolsJsonLength = JSON.stringify(toolDefs).length;
 

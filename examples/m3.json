@@ -24,6 +24,16 @@
         "models": {
           "claude-sonnet-4-6": { "alias": "Claude Sonnet", "maxTokens": 8192 }
         }
+      },
+      "minimax": {
+        "api": "openai-chat",
+        "baseUrl": "https://api.minimax.io/v1",
+        "apiKeyEnv": "M3_MINIMAX_API_KEY",
+        "models": {
+          "MiniMax-M3": { "alias": "MiniMax M3", "maxTokens": 131072, "maxContextTokens": 1048576 },
+          "MiniMax-M2.7": { "alias": "MiniMax M2.7", "maxTokens": 65536 },
+          "MiniMax-M2.5": { "alias": "MiniMax M2.5", "maxTokens": 65536 }
+        }
       }
     }
   },

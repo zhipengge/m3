@@ -1,31 +1,56 @@
 import type { GatewayServer } from "@m3/gateway";
-import { registerWebChatClient, simulateWebChatInbound } from "@m3/channel-extensions";
+import { simulateWebChatInbound } from "@m3/channel-extensions";
 import type { M3Config } from "@m3/config";
-import { createInteractiveRepl } from "./interactive-repl.js";
+import { runInteractiveRepl } from "./interactive-repl.js";
 
 const TERMINAL_PEER = "terminal";
 
-export async function runGatewayRepl(server: GatewayServer, config: M3Config): Promise<void> {
-  console.log("\x1b[1mm3 interactive terminal\x1b[0m (Claude Code–style)");
-  console.log(`  Dashboard: http://${config.gateway.bind}:${config.gateway.port}/dashboard`);
-  console.log("  Exit: Ctrl+C\n");
+export type GatewayReplOptions = {
+  plain?: boolean;
+  workspace?: string;
+};
 
-  const rl = createInteractiveRepl({
+export async function runGatewayRepl(
+  server: GatewayServer,
+  config: M3Config,
+  opts: GatewayReplOptions = {},
+): Promise<void> {
+  const dashboardUrl = `http://${config.gateway.bind}:${config.gateway.port}/dashboard`;
+
+  if (!opts.plain) {
+    process.stdout.write("\x1b[2J\x1b[H");
+  } else {
+    console.log("\x1b[1mm3 interactive terminal\x1b[0m");
+    console.log(`  Dashboard: ${dashboardUrl}`);
+    console.log("  Exit: Ctrl+C\n");
+  }
+
+  const rl = await runInteractiveRepl({
+    plain: opts.plain,
+    peerId: TERMINAL_PEER,
+    config,
+    workspace: opts.workspace,
+    dashboardUrl,
     repromptAfterSubmit: false,
+    showMenuOnStart: opts.plain,
     onLine: async (line) => {
       const runtime = {
         config,
-        log: (msg: string) => console.log(`[m3] ${msg}`),
+        log: (msg: string) => {
+          if (opts.plain) console.log(`[m3] ${msg}`);
+        },
         onInbound: (msg: import("@m3/channels").InboundMessage) => server.dispatchInbound(msg),
       };
       await simulateWebChatInbound(runtime, TERMINAL_PEER, line.trim());
     },
   });
 
-  registerWebChatClient(TERMINAL_PEER, (text) => {
-    process.stdout.write(`\n\x1b[36massistant\x1b[0m ${text}\n\n`);
+  if (rl) {
+    const { registerWebChatClient } = await import("@m3/channel-extensions");
+    registerWebChatClient(TERMINAL_PEER, (text) => {
+      process.stdout.write(`\n\x1b[36massistant\x1b[0m ${text}\n\n`);
+      rl.prompt();
+    });
     rl.prompt();
-  });
-
-  rl.prompt();
+  }
 }

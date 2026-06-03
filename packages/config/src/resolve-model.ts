@@ -64,6 +64,9 @@ function resolveProviderApiKey(
   if (providerId === "deepseek" && process.env.DEEPSEEK_API_KEY) {
     return process.env.DEEPSEEK_API_KEY;
   }
+  if (providerId === "minimax" && process.env.MINIMAX_API_KEY) {
+    return process.env.MINIMAX_API_KEY;
+  }
 
   return undefined;
 }

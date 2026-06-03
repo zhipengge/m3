@@ -1,0 +1,50 @@
+import { createElement } from "react";
+import { render } from "ink";
+import type { M3Config } from "@m3/config";
+import { registerWebChatClient, type WebChatReplSink } from "@m3/channel-extensions";
+import { getReplUiSink } from "./repl-bridge.js";
+import { ReplApp } from "./repl-app.js";
+
+export type InkReplOptions = {
+  peerId: string;
+  config: M3Config;
+  workspace?: string;
+  dashboardUrl?: string;
+  onLine: (line: string) => void | Promise<void>;
+};
+
+export async function runInkRepl(options: InkReplOptions): Promise<void> {
+  const modelLabel = options.config.agent.model ?? options.config.models.default ?? "m3";
+
+  const sinkWrapper: WebChatReplSink = {
+    deliver(text) {
+      getReplUiSink()?.onDeliver(text);
+    },
+    onTyping() {
+      getReplUiSink()?.onTyping();
+    },
+    onDelta(delta) {
+      getReplUiSink()?.onDelta(delta);
+    },
+    onSystem(text) {
+      getReplUiSink()?.onSystem(text);
+    },
+  };
+
+  const { waitUntilExit } = render(
+    createElement(ReplApp, {
+      modelLabel,
+      workspace: options.workspace,
+      dashboardUrl: options.dashboardUrl,
+      onSubmit: options.onLine,
+    }),
+  );
+
+  const unregister = registerWebChatClient(options.peerId, sinkWrapper);
+
+  try {
+    await waitUntilExit();
+  } finally {
+    unregister();
+  }
+}

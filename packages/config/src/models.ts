@@ -6,9 +6,9 @@ export const ProviderApiSchema = z.enum(["openai-chat", "anthropic-messages"]);
 export const ModelEntrySchema = z.object({
   alias: z.string().optional(),
   /** Max completion tokens per turn. */
-  maxTokens: z.number().int().min(256).max(128_000).optional(),
+  maxTokens: z.number().int().min(256).max(524_288).optional(),
   /** Total context window for trimming / local llama --ctx-size hint. */
-  maxContextTokens: z.number().int().min(2048).max(262_144).optional(),
+  maxContextTokens: z.number().int().min(2048).max(1_048_576).optional(),
 });
 
 export const ModelProviderSchema = z.object({
@@ -41,6 +41,22 @@ export const ModelsConfigSchema = z.object({
         apiKeyEnv: "M3_ANTHROPIC_API_KEY",
         models: {
           "claude-sonnet-4-6": { alias: "Claude Sonnet", maxTokens: 8192 },
+        },
+      },
+      minimax: {
+        api: "openai-chat",
+        baseUrl: "https://api.minimax.io/v1",
+        apiKeyEnv: "M3_MINIMAX_API_KEY",
+        models: {
+          "MiniMax-M3": {
+            alias: "MiniMax M3",
+            maxTokens: 131072,
+            maxContextTokens: 1_048_576,
+          },
+          "MiniMax-M2.7": { alias: "MiniMax M2.7", maxTokens: 65536, maxContextTokens: 204800 },
+          "MiniMax-M2.5": { alias: "MiniMax M2.5", maxTokens: 65536, maxContextTokens: 204800 },
+          "MiniMax-M2.1": { alias: "MiniMax M2.1", maxTokens: 65536, maxContextTokens: 204800 },
+          "MiniMax-M2": { alias: "MiniMax M2", maxTokens: 65536, maxContextTokens: 204800 },
         },
       },
     }),

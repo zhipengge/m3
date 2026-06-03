@@ -10,7 +10,7 @@ An agent framework with OpenClaw-style channels, an in-process harness, tools, M
 [![node](https://img.shields.io/badge/node-%E2%89%A522.19-111?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
 [![license](https://img.shields.io/badge/license-MIT-111?style=flat-square)](#)
 
-[Install](#install) · [Usage](#usage) · [Local model](#local-offline-model) · [Features](#features) · [Architecture](#architecture) · [Channels](docs/CHANNELS.md)
+[Install](#install) · [Usage](#usage) · [Local model](#local-offline-model) · [MiniMax](docs/MINIMAX.md) · [Features](#features) · [Architecture](#architecture) · [Channels](docs/CHANNELS.md)
 
 > Channel event → bridge → native agent loop → LLM + tools → reply on the same channel. No external CLI subprocess. Config in `~/.m3/`.
 
@@ -44,11 +44,50 @@ m3 channels scan      # bind Feishu, then run m3
 m3 status             # dashboard → http://127.0.0.1:18790/dashboard
 m3 agent -p "…"       # one-shot, no REPL
 m3 gateway stop       # stop daemon
+m3 models             # list cloud + local models (API key status)
+m3 model              # show active model
+m3 model deepseek-chat   # switch model (writes ~/.m3/m3.json)
 ```
 
-In the REPL (`you>`): natural language or slash commands — **Ctrl+C** exits.
+In the REPL (`›` prompt): natural language or slash commands — **Ctrl+C** exits.
 
-**Tab completion:** type `/` then **Tab** to complete slash commands (menu lists on bare `/` + Tab). **`?`** opens `/help`. Shell-level: `m3 completion install`.
+### Workspace & permissions
+
+On **`m3` / `m3 chat` startup**, m3 asks once whether it may read/write the **current working directory**:
+
+```text
+Choice [Y/n]:   Y / 是 — allow (default, Enter)
+                n / 否 — deny and exit
+```
+
+After you allow, **Write / Edit** and built-in file tools run under that folder for the session (`agent.cwd` is pinned to your launch directory). In `~/.m3/mcp.json`, point the filesystem MCP server at `{{WORKSPACE}}` — **not** `/tmp` (on macOS that appears as `/private/tmp`).
+
+| `agent.permissionMode` | Behavior |
+|------------------------|----------|
+| `default` | Workspace grant at startup; **Bash** may prompt separately in the REPL |
+| `acceptEdits` | Auto-approve file edits; Bash still restricted |
+| `bypassPermissions` | No prompts (channels default via `channelPermissionMode`) |
+
+### Terminal UI (Ink)
+
+Claude Code–style UI: streaming replies, breathing spinner, slash **command palette** (`/` + ↑↓ + Tab). Input uses **`ink-text-input`** (←→ cursor, paste, CJK/IME-friendly).
+
+| Fallback | Command |
+|----------|---------|
+| Plain readline | `m3 chat --plain` or `M3_PLAIN_REPL=1` |
+| Skip workspace prompt (CI) | `M3_SKIP_WORKSPACE_GRANT=1` |
+
+Shell tab completion: `m3 completion install`.
+
+### Cloud models
+
+```bash
+m3 models                    # list providers + API key status
+m3 model                     # show active model
+m3 model MiniMax-M3          # switch (writes ~/.m3/m3.json)
+```
+
+Built-in providers: **DeepSeek**, **Anthropic**, **MiniMax** (OpenAI-compatible). See [docs/MINIMAX.md](docs/MINIMAX.md).
 
 ### Slash commands (Claude Code–style)
 
@@ -60,7 +99,7 @@ In the REPL (`you>`): natural language or slash commands — **Ctrl+C** exits.
 | `/compact [focus]` | Compress transcript history (same algorithm as 90% auto-compress) |
 | `/goal <condition>` | Set a session goal; `/goal` shows it; `/goal clear` clears |
 | `/plan` | Plan-mode prompt |
-| `/model <ref>` | Show model ref |
+| `/model [ref]` | Show active model; switch via `m3 model <ref>` |
 | `/mcp` · `/skills` · `/doctor` · … | See `/help` |
 
 **Contributors:** `pnpm install && pnpm build && pnpm test`
@@ -100,10 +139,10 @@ node scripts/verify-local.mjs   # doctor + slash cmds + local agent smoke test
 | **Multi-task** | Feishu + Slack + WebChat in parallel; multi-account; session locks; live dashboard |
 | **Multi-agent** | Per-conversation `sessionKey`, sub-agents, pairing & allowlists, channel permission modes |
 | **Channels** | Feishu long connection or webhook · Slack Socket Mode · WebChat |
-| **Harness** | In-process loop · DeepSeek · Anthropic · **local llama.cpp** · mock engine |
+| **Harness** | In-process loop · DeepSeek · Anthropic · **MiniMax** · **local llama.cpp** · mock engine |
 | **Security** | Workspace sandbox · Bash allowlist · audit log |
 | **Ecosystem** | `SKILL.md` · MCP · `@m3/plugin-sdk` plugins |
-| **DX** | Claude Code–style terminal · zsh completion · `/dashboard` console |
+| **DX** | `m3 models` / `m3 model` · workspace grant · Ink REPL · zsh completion · `/dashboard` |
 
 ## Architecture
 
@@ -167,7 +206,7 @@ flowchart TB
   subgraph L5["⑤ Inference"]
     direction LR
     RTM[LLM router<br/>Provider API]:::comp
-    CLD[Cloud APIs<br/>DeepSeek · Anthropic]:::infer
+    CLD[Cloud APIs<br/>DeepSeek · Anthropic · MiniMax]:::infer
     LOC[Local GGUF<br/>Qwen3-VL · llama.cpp]:::infer
   end
 
@@ -275,7 +314,7 @@ sequenceDiagram
 | **Gateway** | `gateway` | `GatewayServer`, `ChannelManager`, control UI, pairing API, `EventLog` |
 | **Bridge** | `bridge` | `MessagePipeline`, `resolveAgentRoute`, slash commands, `SessionLock`, `PermissionBridge` |
 | **Agent** | `agent` | `NativeEngine`, `runQueryLoop`, built-in tools, Skills, MCP pool, plugins, sandbox |
-| **Inference** | `agent` + `@m3/local` | `LLM router` → DeepSeek / Anthropic, or `m3 local` → OpenAI-compatible server |
+| **Inference** | `agent` + `@m3/local` | `LLM router` → DeepSeek / Anthropic / MiniMax, or `m3 local` → OpenAI-compatible server |
 
 Full design notes → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
@@ -286,7 +325,7 @@ Full design notes → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 | `~/.m3/m3.json` | Models, gateway, agent, channels |
 | `~/.m3/secrets.json` | API keys — never commit |
 
-Templates: [`examples/m3.json`](examples/m3.json) · [`examples/secrets.json.example`](examples/secrets.json.example)
+Templates: [`examples/m3.json`](examples/m3.json) · [`examples/secrets.json.example`](examples/secrets.json.example) · [`examples/mcp.json`](examples/mcp.json) (`{{WORKSPACE}}` for filesystem MCP)
 
 <details>
 <summary>Example <code>agent</code> block</summary>
@@ -317,6 +356,7 @@ Channel setup: [**docs/CHANNELS.md**](docs/CHANNELS.md)
 | `m3 channels configure` | Channel wizard |
 | `m3 channels list` / `remove` | Manage accounts |
 | `m3 doctor` / `m3 status` | Health · port · PID · dashboard URL |
+| `m3 models` / `m3 model <ref>` | List or switch active LLM |
 | `m3 agent -p "…"` | Headless prompt |
 | `m3 completion install` | zsh completions |
 | `m3 local` | Offline GGUF models (default Qwen3-VL-4B; `--model` for others) |

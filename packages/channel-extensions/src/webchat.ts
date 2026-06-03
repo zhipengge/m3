@@ -8,9 +8,20 @@ import type {
 } from "@m3/channels";
 import type { M3Config } from "@m3/config";
 
+/** Rich REPL sink (Claude Code–style terminal UI). */
+export type WebChatReplSink = {
+  deliver: (text: string) => void;
+  onTyping?: () => void;
+  onDelta?: (delta: string) => void;
+  onSystem?: (text: string) => void;
+};
+
 type WebChatClient = {
   peerId: string;
-  send: (text: string) => void;
+  deliver: (text: string) => void;
+  onTyping?: () => void;
+  onDelta?: (delta: string) => void;
+  onSystem?: (text: string) => void;
 };
 
 const clients = new Map<string, WebChatClient>();
@@ -20,15 +31,44 @@ function queueKey(channelId: string, accountId: string, peerId: string): string 
   return `${channelId}:${accountId}:${peerId}`;
 }
 
-export function registerWebChatClient(peerId: string, send: (text: string) => void): () => void {
-  clients.set(peerId, { peerId, send });
+function normalizeHandler(
+  peerId: string,
+  handler: ((text: string) => void) | WebChatReplSink,
+): WebChatClient {
+  if (typeof handler === "function") {
+    return { peerId, deliver: handler };
+  }
+  return {
+    peerId,
+    deliver: handler.deliver,
+    onTyping: handler.onTyping,
+    onDelta: handler.onDelta,
+    onSystem: handler.onSystem,
+  };
+}
+
+export function registerWebChatClient(
+  peerId: string,
+  handler: ((text: string) => void) | WebChatReplSink,
+): () => void {
+  const client = normalizeHandler(peerId, handler);
+  clients.set(peerId, client);
   const key = queueKey("webchat", "default", peerId);
   const pending = pendingOutbound.get(key) ?? [];
   for (const msg of pending) {
-    send(msg);
+    client.deliver(msg);
   }
   pendingOutbound.delete(key);
   return () => clients.delete(peerId);
+}
+
+/** Push a streaming token to the terminal REPL when registered. */
+export function pushWebChatDelta(peerId: string, delta: string): void {
+  clients.get(peerId)?.onDelta?.(delta);
+}
+
+export function pushWebChatSystem(peerId: string, text: string): void {
+  clients.get(peerId)?.onSystem?.(text);
 }
 
 export function simulateWebChatInbound(
@@ -50,13 +90,21 @@ const outbound: ChannelOutboundAdapter = {
   async send(message: OutboundMessage) {
     const client = clients.get(message.peerId);
     if (client) {
-      client.send(message.body);
+      client.deliver(message.body);
       return;
     }
     const key = queueKey(message.channelId, message.accountId, message.peerId);
     const queue = pendingOutbound.get(key) ?? [];
     queue.push(message.body);
     pendingOutbound.set(key, queue);
+  },
+  async sendTyping(params: {
+    channelId: string;
+    accountId: string;
+    peerId: string;
+  }) {
+    const client = clients.get(params.peerId);
+    client?.onTyping?.();
   },
 };
 

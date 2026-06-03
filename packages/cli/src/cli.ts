@@ -7,6 +7,7 @@ import {
   expandHome,
   loadConfig,
   loadSecrets,
+  resolveAgentWorkspace,
   resolveConfigPath,
   resolveModel,
   saveConfig,
@@ -29,9 +30,12 @@ import { loadMcpConfig, mergeMcpServers } from "@m3/agent";
 import { listChannels, runChannelsWizard } from "./channels-wizard.js";
 import { installCompletion, printCompletion } from "./completion.js";
 import { runGatewayRepl } from "./gateway-repl.js";
-import { createInteractiveRepl } from "./interactive-repl.js";
+import { runInteractiveRepl } from "./interactive-repl.js";
 import { runFeishuScanSetup } from "./scan-setup.js";
 import { registerLocalCommand } from "./local-command.js";
+import { registerModelCommands } from "./model-command.js";
+import { registerTerminalPermissionPrompt } from "./terminal-permission.js";
+import { promptWorkspaceAccess } from "./workspace-grant.js";
 import { getLocalStatus, prepareInferenceBackend } from "@m3/local";
 
 const program = new Command();
@@ -63,10 +67,15 @@ async function startGateway(opts: {
   port?: string;
   config?: string;
   interactive?: boolean;
+  plainRepl?: boolean;
 }): Promise<void> {
-    const config = loadConfig(opts.config);
+    let config = loadConfig(opts.config);
     if (opts.port) {
       config.gateway.port = Number(opts.port);
+    }
+    const launchCwd = process.cwd();
+    if (!config.agent.cwd?.trim()) {
+      config = { ...config, agent: { ...config.agent, cwd: launchCwd } };
     }
     if (!opts.mock) {
       await prepareInferenceBackend(config);
@@ -81,12 +90,30 @@ async function startGateway(opts: {
 
     const server = await createGatewayServer({ config, mockAgent: opts.mock });
     try {
+      let grantedWorkspace: string | undefined;
+      if (opts.interactive) {
+        const workspace = resolveAgentWorkspace(config.agent, launchCwd);
+        const granted = await promptWorkspaceAccess(workspace);
+        if (!granted) {
+          console.error("Cannot run interactive m3 without workspace access.");
+          process.exit(1);
+        }
+        grantedWorkspace = workspace;
+      }
+
       const { url } = await server.start();
       console.log(`m3 gateway listening on ${url}`);
       console.log(`Dashboard: http://${bind}:${port}/dashboard`);
       console.log(`Health: http://${bind}:${port}/health`);
-      if (opts.interactive) {
-        await runGatewayRepl(server, config);
+      if (opts.interactive && grantedWorkspace) {
+        server.getPermissionBridge().grantWorkspace(grantedWorkspace);
+        if (config.agent.permissionMode === "default") {
+          registerTerminalPermissionPrompt(server.getPermissionBridge());
+        }
+        await runGatewayRepl(server, config, {
+          plain: opts.plainRepl,
+          workspace: grantedWorkspace,
+        });
       }
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
@@ -107,11 +134,20 @@ program
   .description("Start m3 gateway daemon")
   .option("--mock", "Use mock agent engine")
   .option("-i, --interactive", "Terminal REPL (Claude Code-style)")
+  .option("--plain", "Plain readline REPL (no Ink UI)")
   .option("--port <port>", "Override gateway port")
   .option("--config <path>", "Config file path")
-  .action(async (opts: { mock?: boolean; port?: string; config?: string; interactive?: boolean }) => {
-    await startGateway(opts);
-  })
+  .action(
+    async (opts: {
+      mock?: boolean;
+      port?: string;
+      config?: string;
+      interactive?: boolean;
+      plain?: boolean;
+    }) => {
+      await startGateway({ ...opts, plainRepl: opts.plain });
+    },
+  )
   .command("stop")
   .description("Stop gateway listening on configured port")
   .option("--config <path>", "Config file path")
@@ -334,6 +370,7 @@ channels
   });
 
 registerLocalCommand(program);
+registerModelCommands(program);
 
 channels
   .command("scan")
@@ -356,10 +393,11 @@ program
   .command("chat")
   .description("Start gateway with terminal REPL (recommended)")
   .option("--mock", "Use mock agent")
+  .option("--plain", "Plain readline REPL (no Ink UI)")
   .option("--port <port>", "Override gateway port")
   .option("--config <path>", "Config file path")
-  .action(async (opts: { mock?: boolean; port?: string; config?: string }) => {
-    await startGateway({ ...opts, interactive: true });
+  .action(async (opts: { mock?: boolean; port?: string; config?: string; plain?: boolean }) => {
+    await startGateway({ ...opts, interactive: true, plainRepl: opts.plain });
   });
 
 const completionCmd = program
@@ -403,10 +441,17 @@ program
   .command("webchat")
   .description("Interactive webchat REPL (local test)")
   .option("--mock", "Use mock agent")
+  .option("--plain", "Plain readline REPL (no Ink UI)")
   .option("--peer <id>", "Peer id", "local-user")
   .option("--port <port>", "Override gateway port")
   .option("--config <path>", "Config file path")
-  .action(async (opts: { mock?: boolean; peer?: string; port?: string; config?: string }) => {
+  .action(async (opts: {
+    mock?: boolean;
+    plain?: boolean;
+    peer?: string;
+    port?: string;
+    config?: string;
+  }) => {
     const config = loadConfig(opts.config);
     if (opts.port) config.gateway.port = Number(opts.port);
 
@@ -424,11 +469,16 @@ program
     console.log(`Gateway: http://${config.gateway.bind}:${config.gateway.port}/health`);
 
     const peer = opts.peer ?? "local-user";
-    console.log(`WebChat REPL (peer=${peer}).`);
+    const dashboardUrl = `http://${config.gateway.bind}:${config.gateway.port}/dashboard`;
 
-    const rl = createInteractiveRepl({
+    const rl = await runInteractiveRepl({
+      plain: opts.plain,
+      peerId: peer,
+      config,
+      dashboardUrl,
       prompt: "you> ",
       repromptAfterSubmit: false,
+      showMenuOnStart: Boolean(opts.plain),
       onLine: async (line) => {
         const runtime = {
           config,
@@ -439,15 +489,17 @@ program
       },
     });
 
-    registerWebChatClient(peer, (text) => {
-      console.log(`\n[assistant] ${text}\n`);
+    if (rl) {
+      registerWebChatClient(peer, (text) => {
+        console.log(`\n[assistant] ${text}\n`);
+        rl.prompt();
+      });
       rl.prompt();
-    });
-    rl.prompt();
+    }
 
     process.on("SIGINT", async () => {
       await server.stop();
-      rl.close();
+      rl?.close();
       process.exit(0);
     });
   });

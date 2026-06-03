@@ -112,10 +112,16 @@ const BUILTIN_COMMANDS: Record<string, CommandHandler> = {
     prompt: "[plan mode] Propose a detailed plan before making any file changes or running commands.",
   }),
   model: (args, ctx) => {
-    const model = args.trim() || ctx.config.agent.model;
+    const query = args.trim();
+    if (!query) {
+      return {
+        action: "reply_only",
+        text: `Active model: ${ctx.config.agent.model}\nList: m3 models\nSwitch: m3 model <ref>`,
+      };
+    }
     return {
       action: "reply_only",
-      text: `Model: ${model}\nPersist changes in ~/.m3/m3.json (models.default / agent.model).`,
+      text: `To switch model, run in terminal:\n  m3 model ${query}\n\n(/model in chat does not write m3.json)`,
     };
   },
   permissions: (_args, ctx) => ({

@@ -4,7 +4,7 @@ import {
   compressConversationHistory,
   estimateContextUsageRatio,
 } from "@m3/agent";
-import { feishuReactToMessage } from "@m3/channel-extensions";
+import { feishuReactToMessage, pushWebChatDelta, pushWebChatSystem } from "@m3/channel-extensions";
 import {
   createReplyDispatcher,
   finalizeInboundContext,
@@ -13,7 +13,7 @@ import {
   type InboundMessage,
 } from "@m3/channels";
 import type { M3Config } from "@m3/config";
-import { loadSecrets, resolveModel } from "@m3/config";
+import { loadSecrets, resolveAgentWorkspace, resolveModel } from "@m3/config";
 import { GoalStore, parseSlashCommand } from "@m3/commands";
 import {
   applyCommandResult,
@@ -25,7 +25,7 @@ import {
 import { agentConfigForChannel } from "./channel-permissions.js";
 import { PairingStore } from "./pairing-store.js";
 import { createPermissionHandler } from "./permission-handler.js";
-import { PermissionBridge } from "./permission-bridge.js";
+import type { PermissionBridge } from "./permission-bridge.js";
 import { inboundToPrompt, SessionMapper } from "./session-mapper.js";
 import { SessionLock } from "./session-lock.js";
 import { StreamAdapter } from "./stream-adapter.js";
@@ -257,13 +257,30 @@ export class MessagePipeline {
         updatedAt: new Date().toISOString(),
       });
 
-      const stream = new StreamAdapter(dispatcher, { verboseTools: false });
+      const stream = new StreamAdapter(dispatcher, {
+        verboseTools:
+          finalized.channelId === "webchat" && finalized.peerId === "terminal",
+        onAssistantDelta:
+          finalized.channelId === "webchat"
+            ? (delta) => pushWebChatDelta(finalized.peerId, delta)
+            : undefined,
+        onSystemNotice:
+          finalized.channelId === "webchat"
+            ? (text) => pushWebChatSystem(finalized.peerId, text)
+            : undefined,
+      });
       let sessionId = mapping?.claudeSessionId;
 
-      const channelAgent = agentConfigForChannel(this.options.config.agent);
-      const channelBridge = new PermissionBridge(channelAgent);
-      const permissionHandler = createPermissionHandler(channelBridge);
-      const cwd = route.workspace ?? this.options.config.agent.cwd ?? process.cwd();
+      const channelAgent = agentConfigForChannel(this.options.config.agent, {
+        channelId: finalized.channelId,
+        peerId: finalized.peerId,
+      });
+      const cwd = route.workspace ?? resolveAgentWorkspace(this.options.config.agent);
+      const permissionHandler = createPermissionHandler(
+        this.options.permissionBridge,
+        () => channelAgent.permissionMode,
+        cwd,
+      );
 
       for await (const evt of this.options.engine.run({
         prompt,

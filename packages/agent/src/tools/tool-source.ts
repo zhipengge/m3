@@ -89,6 +89,15 @@ export async function collectTools(config: AgentConfig): Promise<CollectedTools>
   }
 
   let collected = dedupeByName(tools);
+  const hasBuiltinWrite = collected.some((t) => t.name === "Write");
+  if (hasBuiltinWrite) {
+    collected = collected.filter(
+      (t) =>
+        !t.name.endsWith("__write_file") &&
+        !t.name.endsWith("__edit_file") &&
+        !t.name.endsWith("__create_directory"),
+    );
+  }
   if (config.permissionMode === "plan") {
     collected = collected.filter((t) => t.isReadOnly);
   }

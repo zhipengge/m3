@@ -11,6 +11,8 @@ describe("M3ConfigSchema", () => {
     expect(cfg.agent.model).toBe("deepseek/deepseek-chat");
     expect(cfg.models.default).toBe("deepseek/deepseek-chat");
     expect(cfg.models.providers.deepseek?.baseUrl).toBe("https://api.deepseek.com");
+    expect(cfg.models.providers.minimax?.baseUrl).toBe("https://api.minimax.io/v1");
+    expect(cfg.models.providers.minimax?.models["MiniMax-M3"]?.maxTokens).toBe(131072);
   });
 });
 
@@ -25,6 +27,18 @@ describe("resolveModel", () => {
     expect(resolved.modelId).toBe("deepseek-chat");
     expect(resolved.api).toBe("openai-chat");
     expect(resolved.apiKey).toBe("sk-test-key");
+  });
+
+  it("resolves minimax model ref with secrets", () => {
+    const config = M3ConfigSchema.parse({});
+    const secrets = M3SecretsSchema.parse({
+      providers: { minimax: { apiKey: "sk-minimax-test" } },
+    });
+    const resolved = resolveModel(config, secrets, "minimax/MiniMax-M3");
+    expect(resolved.providerId).toBe("minimax");
+    expect(resolved.modelId).toBe("MiniMax-M3");
+    expect(resolved.baseUrl).toBe("https://api.minimax.io/v1");
+    expect(resolved.apiKey).toBe("sk-minimax-test");
   });
 
   it("resolves local provider without API key when localOnly", () => {

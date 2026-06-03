@@ -21,4 +21,12 @@ describe("channel permissions", () => {
     const out = agentConfigForChannel({ permissionMode: "default" } as never);
     expect(out.permissionMode).toBe("bypassPermissions");
   });
+
+  it("terminal REPL keeps agent.permissionMode", () => {
+    const out = agentConfigForChannel({ permissionMode: "default" } as never, {
+      channelId: "webchat",
+      peerId: "terminal",
+    });
+    expect(out.permissionMode).toBe("default");
+  });
 });

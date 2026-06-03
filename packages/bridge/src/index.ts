@@ -2,6 +2,7 @@ export * from "./session-mapper.js";
 export * from "./stream-adapter.js";
 export * from "./command-bridge.js";
 export * from "./permission-bridge.js";
+export * from "./workspace-access.js";
 export * from "./permission-handler.js";
 export * from "./channel-permissions.js";
 export * from "./pipeline.js";

@@ -1,7 +1,9 @@
 import type { AgentConfig } from "@m3/config";
 import type { ToolDefinition, ToolResult } from "../harness/types.js";
 import type { ToolProvider } from "../tools/tool-source.js";
+import { resolveAgentWorkspace } from "@m3/config";
 import { loadMcpConfig, mergeMcpServers, type McpServerEntry } from "./config.js";
+import { applyWorkspaceToMcpServers } from "./workspace-roots.js";
 import { connectMcpServer, listAllMcpTools, type McpConnectedServer } from "./pool.js";
 
 function mcpToolName(prefix: string, serverId: string, toolName: string): string {
@@ -80,8 +82,10 @@ let cacheKey = "";
 function resolveServers(config: AgentConfig): { key: string; entries: Record<string, McpServerEntry> } {
   const fromFile = loadMcpConfig(config.mcp?.config);
   const merged = mergeMcpServers(fromFile, config.mcp?.servers);
-  const key = JSON.stringify(merged);
-  return { key, entries: merged };
+  const workspace = resolveAgentWorkspace(config);
+  const entries = applyWorkspaceToMcpServers(merged, workspace);
+  const key = JSON.stringify({ entries, workspace });
+  return { key, entries };
 }
 
 async function getOrConnectServers(config: AgentConfig): Promise<McpConnectedServer[]> {
@@ -143,6 +147,8 @@ export const mcpToolProvider: ToolProvider = {
         "## MCP Tools",
         `External MCP tools are available with prefix \`${prefix}\`. Original server tool names are listed per description.`,
         `Connected servers: ${servers.map((s) => s.id).join(", ")}.`,
+        `Filesystem MCP roots are scoped to the agent workspace (${resolveAgentWorkspace(config)}). Use paths relative to that directory.`,
+        `Use built-in Read/Write/Edit with file_path (workspace-relative). MCP write_file is not exposed when Write is available.`,
       ].join("\n"),
     };
   },

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentConfig, ResolvedModel } from "@m3/config";
+import { resolveAgentWorkspace } from "@m3/config";
 import type { PermissionHandler } from "../permissions/manager.js";
 import { runQueryLoop } from "./query-loop.js";
 import type { HarnessEvent } from "./types.js";
@@ -29,7 +30,7 @@ export class QueryEngine {
     permissionHandler?: PermissionHandler;
   }): AsyncGenerator<HarnessEvent, { text: string; sessionId: string }> {
     const sessionId = params.sessionId ?? randomUUID();
-    const cwd = params.cwd ?? this.options.agent.cwd ?? process.cwd();
+    const cwd = params.cwd ?? resolveAgentWorkspace(this.options.agent);
     const resumeMessages =
       params.resume && params.sessionId ? this.store.load(params.sessionId) : undefined;
 

@@ -4,3 +4,5 @@ export * from "./models.js";
 export { parseModelRef } from "./models.js";
 export * from "./secrets.js";
 export * from "./resolve-model.js";
+export * from "./model-catalog.js";
+export * from "./workspace.js";

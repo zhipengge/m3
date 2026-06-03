@@ -1,4 +1,5 @@
 import type { AgentConfig } from "@m3/config";
+import { isFileMutationTool, isSameWorkspace } from "./workspace-access.js";
 
 export type PermissionRequest = {
   id: string;
@@ -18,8 +19,24 @@ export type PermissionPromptHandler = (
 export class PermissionBridge {
   private pending = new Map<string, PermissionRequest>();
   private handlers: PermissionPromptHandler[] = [];
+  private grantedWorkspace: string | null = null;
 
   constructor(private readonly config: AgentConfig) {}
+
+  /** Grant read/write access for this session (set at m3 chat startup). */
+  grantWorkspace(workspace: string): void {
+    this.grantedWorkspace = workspace;
+  }
+
+  getGrantedWorkspace(): string | null {
+    return this.grantedWorkspace;
+  }
+
+  isWorkspaceGranted(workspace?: string): boolean {
+    if (!this.grantedWorkspace) return false;
+    if (!workspace) return true;
+    return isSameWorkspace(this.grantedWorkspace, workspace);
+  }
 
   registerHandler(handler: PermissionPromptHandler): () => void {
     this.handlers.push(handler);
@@ -33,15 +50,33 @@ export class PermissionBridge {
     description: string;
     sessionKey: string;
     isReadOnly?: boolean;
+    permissionMode?: AgentConfig["permissionMode"];
+    workspaceRoot?: string;
   }): Promise<PermissionDecision> {
-    if (this.config.permissionMode === "bypassPermissions") {
+    const mode = params.permissionMode ?? this.config.permissionMode;
+    if (mode === "bypassPermissions") {
       return "approve";
     }
-    if (this.config.permissionMode === "acceptEdits" && params.toolName !== "Bash") {
+    if (mode === "acceptEdits" && params.toolName !== "Bash") {
       return "approve";
     }
     if (params.isReadOnly) {
       return "approve";
+    }
+
+    const workspace = params.workspaceRoot;
+    const workspaceOk = workspace ? this.isWorkspaceGranted(workspace) : Boolean(this.grantedWorkspace);
+
+    if (workspaceOk && isFileMutationTool(params.toolName)) {
+      return "approve";
+    }
+
+    if (
+      !workspaceOk &&
+      isFileMutationTool(params.toolName) &&
+      (mode === "default" || mode === "acceptEdits")
+    ) {
+      return "deny";
     }
 
     const request: PermissionRequest = {
@@ -65,10 +100,10 @@ export class PermissionBridge {
 
     this.pending.delete(request.id);
     // No interactive handler (Feishu/Slack): allow edits & MCP; Bash still denied in default mode.
-    if (this.config.permissionMode === "acceptEdits" && params.toolName !== "Bash") {
+    if (mode === "acceptEdits" && params.toolName !== "Bash") {
       return "approve";
     }
-    if (this.config.permissionMode === "default" && params.toolName !== "Bash") {
+    if (mode === "default" && params.toolName !== "Bash") {
       return "approve";
     }
     return "deny";
