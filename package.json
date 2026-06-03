@@ -1,0 +1,34 @@
+{
+  "name": "m3",
+  "version": "0.2.0",
+  "private": true,
+  "description": "m3 Agent Coder — native harness + multi-channel",
+  "type": "module",
+  "bin": {
+    "m3": "./bin/m3.js"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "pnpm -r --sort run build",
+    "dev": "pnpm --filter @m3/cli dev",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify:e2e": "node scripts/verify-e2e.mjs",
+    "verify:e2e:live": "node scripts/verify-e2e.mjs --live-agent",
+    "verify:hello-plugin": "node scripts/verify-hello-plugin.mjs",
+    "verify:mcp": "node scripts/verify-mcp.mjs",
+    "verify:mcp:connect": "node scripts/verify-mcp.mjs --connect",
+    "verify:mcp:live": "node scripts/verify-mcp.mjs --connect --live",
+    "typecheck": "pnpm -r run typecheck",
+    "m3": "node bin/m3.js"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/server-filesystem": "^2025.3.28",
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4",
+    "ws": "^8.18.2"
+  }
+}

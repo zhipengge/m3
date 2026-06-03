@@ -1,0 +1,65 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+*.tsbuildinfo
+
+# Local runtime data (never commit)
+.m3/
+*.db
+*.db-journal
+
+# Secrets & credentials
+.env
+.env.*
+!.env.example
+secrets.json
+**/secrets.json
+!examples/secrets.json.example
+*.pem
+*.key
+*.p12
+credentials.json
+**/credentials.json
+
+# User config copies (use examples/ only)
+m3.local.json
+
+# Session / gateway runtime files
+sessions.json
+pairing.json
+gateway.pid
+**/media/
+
+# Logs & debug
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test & coverage
+coverage/
+.nyc_output/
+/tmp/m3-test-*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+*.swp
+*.swo
+*~
+
+# Cursor / agent local
+.cursor/
+agent-transcripts/
+
+# Optional local demos (not part of core product)
+demo.html

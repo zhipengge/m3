@@ -1,0 +1,31 @@
+{
+  "name": "@m3/gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@m3/agent": "workspace:*",
+    "@m3/bridge": "workspace:*",
+    "@m3/channel-extensions": "workspace:*",
+    "@m3/channels": "workspace:*",
+    "@m3/config": "workspace:*",
+    "@m3/gateway-protocol": "workspace:*",
+    "@m3/plugin-sdk": "workspace:*",
+    "ws": "^8.18.2"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "$schema": "m3-config-v1",
+  "gateway": {
+    "port": 18790,
+    "bind": "127.0.0.1",
+    "authToken": ""
+  },
+  "models": {
+    "default": "deepseek/deepseek-chat",
+    "providers": {
+      "deepseek": {
+        "api": "openai-chat",
+        "baseUrl": "https://api.deepseek.com",
+        "apiKeyEnv": "M3_DEEPSEEK_API_KEY",
+        "models": {
+          "deepseek-chat": { "alias": "DeepSeek Chat", "maxTokens": 8192 },
+          "deepseek-coder": { "alias": "DeepSeek Coder", "maxTokens": 8192 },
+          "deepseek-reasoner": { "alias": "DeepSeek Reasoner", "maxTokens": 8192 }
+        }
+      },
+      "anthropic": {
+        "api": "anthropic-messages",
+        "apiKeyEnv": "M3_ANTHROPIC_API_KEY",
+        "models": {
+          "claude-sonnet-4-6": { "alias": "Claude Sonnet", "maxTokens": 8192 }
+        }
+      }
+    }
+  },
+  "agent": {
+    "engine": "native",
+    "model": "deepseek/deepseek-chat",
+    "permissionMode": "default",
+    "channelPermissionMode": "bypassPermissions",
+    "tools": "*",
+    "maxTurns": 25,
+    "mcp": {
+      "config": "~/.m3/mcp.json",
+      "toolPrefix": "mcp__"
+    },
+    "sandbox": {
+      "enabled": true,
+      "allowReadOutside": false,
+      "bashEnvAllow": []
+    },
+    "skills": {
+      "dirs": ["~/.m3/skills"]
+    }
+  },
+  "channels": {
+    "webchat": {
+      "default": { "enabled": true }
+    },
+    "feishu": {
+      "default": {
+        "enabled": false,
+        "appId": "",
+        "appSecret": "",
+        "webhookPath": "/feishu/events",
+        "webhookPort": 18791,
+        "verificationToken": "",
+        "dmPolicy": "pairing",
+        "allowFrom": []
+      }
+    },
+    "slack": {
+      "default": {
+        "enabled": false,
+        "botToken": "xoxb-...",
+        "appToken": "xapp-...",
+        "dmPolicy": "pairing",
+        "allowFrom": []
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "hello": { "enabled": true }
+    },
+    "paths": []
+  },
+  "bindings": [],
+  "session": {
+    "dbPath": "~/.m3/sessions.json",
+    "dmScope": "per-peer"
+  }
+}

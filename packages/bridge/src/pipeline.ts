@@ -1,0 +1,292 @@
+import type { AgentEngine } from "@m3/agent";
+import { SessionMessageStore } from "@m3/agent";
+import { feishuReactToMessage } from "@m3/channel-extensions";
+import {
+  createReplyDispatcher,
+  finalizeInboundContext,
+  getChannelPlugin,
+  resolveAgentRoute,
+  type InboundMessage,
+} from "@m3/channels";
+import type { M3Config } from "@m3/config";
+import { parseSlashCommand } from "@m3/commands";
+import {
+  applyCommandResult,
+  CommandBridge,
+  isClearSessionCommand,
+  isReplyOnlyCommand,
+} from "./command-bridge.js";
+import { agentConfigForChannel } from "./channel-permissions.js";
+import { PairingStore } from "./pairing-store.js";
+import { createPermissionHandler } from "./permission-handler.js";
+import { PermissionBridge } from "./permission-bridge.js";
+import { inboundToPrompt, SessionMapper } from "./session-mapper.js";
+import { SessionLock } from "./session-lock.js";
+import { StreamAdapter } from "./stream-adapter.js";
+
+export type MessagePipelineOptions = {
+  config: M3Config;
+  engine: AgentEngine;
+  sessionMapper: SessionMapper;
+  permissionBridge: PermissionBridge;
+  pairingStore?: PairingStore;
+  sessionLock?: SessionLock;
+  onLog?: (level: "info" | "warn" | "error", message: string) => void;
+  mock?: boolean;
+};
+
+function getDmPolicy(
+  config: M3Config,
+  channelId: string,
+  accountId: string,
+): "pairing" | "open" | "closed" | undefined {
+  const ch = config.channels[channelId as keyof typeof config.channels];
+  if (!ch || typeof ch !== "object") return undefined;
+  const acc = (ch as Record<string, { dmPolicy?: string }>)[accountId];
+  return acc?.dmPolicy as "pairing" | "open" | "closed" | undefined;
+}
+
+function isSenderAllowed(
+  config: M3Config,
+  channelId: string,
+  accountId: string,
+  peerId: string,
+): boolean {
+  const ch = config.channels[channelId as keyof typeof config.channels];
+  if (!ch || typeof ch !== "object") return false;
+  const acc = (ch as Record<string, { allowFrom?: string[] }>)[accountId];
+  const allow = acc?.allowFrom ?? [];
+  return allow.includes("*") || allow.includes(peerId);
+}
+
+export class MessagePipeline {
+  private readonly pairingStore: PairingStore;
+  private readonly sessionLock: SessionLock;
+  private readonly transcriptStore = new SessionMessageStore();
+
+  constructor(private readonly options: MessagePipelineOptions) {
+    this.pairingStore = options.pairingStore ?? new PairingStore();
+    this.sessionLock = options.sessionLock ?? new SessionLock();
+  }
+
+  private log(level: "info" | "warn" | "error", message: string): void {
+    this.options.onLog?.(level, message);
+    if (level === "error") {
+      process.stderr.write(`[m3:pipeline] ${message}\n`);
+    }
+  }
+
+  async handleInbound(message: InboundMessage): Promise<void> {
+    const finalized = finalizeInboundContext(message);
+    const route = resolveAgentRoute({
+      config: this.options.config,
+      channel: finalized.channelId,
+      accountId: finalized.accountId,
+      peerId: finalized.peerId,
+      peerKind: finalized.peerKind,
+    });
+
+    await this.sessionLock.run(route.sessionKey, async () => {
+      await this.handleInboundLocked(finalized, route);
+    });
+  }
+
+  private async handleInboundLocked(
+    finalized: InboundMessage,
+    route: ReturnType<typeof resolveAgentRoute>,
+  ): Promise<void> {
+    const plugin = getChannelPlugin(finalized.channelId);
+    if (!plugin) {
+      throw new Error(`Unknown channel: ${finalized.channelId}`);
+    }
+
+    const dispatcher = createReplyDispatcher(plugin, finalized);
+
+    try {
+      const dmPolicy = getDmPolicy(
+        this.options.config,
+        finalized.channelId,
+        finalized.accountId,
+      );
+      if (
+        dmPolicy === "pairing" &&
+        !isSenderAllowed(
+          this.options.config,
+          finalized.channelId,
+          finalized.accountId,
+          finalized.peerId,
+        ) &&
+        !this.pairingStore.isApproved(
+          finalized.channelId,
+          finalized.accountId,
+          finalized.peerId,
+        )
+      ) {
+        const parsed = parseSlashCommand(finalized.body);
+        if (parsed?.name === "pair" && parsed.args) {
+          const ok = this.pairingStore.approve(
+            finalized.channelId,
+            finalized.accountId,
+            finalized.peerId,
+            parsed.args,
+          );
+          await dispatcher.deliver({
+            text: ok
+              ? "Pairing successful. You can start chatting."
+              : "Invalid pairing code. Please try again.",
+          });
+          return;
+        }
+        const rec = this.pairingStore.getOrCreate(
+          finalized.channelId,
+          finalized.accountId,
+          finalized.peerId,
+        );
+        await dispatcher.deliver({
+          text: `Not paired. Send: /pair ${rec.code}`,
+        });
+        this.log("info", `pairing required ${finalized.channelId}:${finalized.peerId}`);
+        return;
+      }
+
+      if (plugin.security) {
+        const allowed = await plugin.security.isAllowedSender({
+          config: this.options.config,
+          accountId: finalized.accountId,
+          peerId: finalized.peerId,
+        });
+        if (!allowed) {
+          this.log("warn", `sender blocked ${finalized.channelId}:${finalized.peerId}`);
+          return;
+        }
+      }
+
+      try {
+        await dispatcher.startTyping?.();
+      } catch {
+        // best-effort ack
+      }
+
+      const cmdBridge = new CommandBridge({
+        config: this.options.config,
+        sessionKey: route.sessionKey,
+        channel: finalized.channelId,
+      });
+
+      const cmdResult = cmdBridge.tryHandle(finalized.body);
+      if (cmdResult && isClearSessionCommand(cmdResult)) {
+        const mapping = this.options.sessionMapper.get(route.sessionKey);
+        this.options.sessionMapper.remove(route.sessionKey);
+        if (mapping?.claudeSessionId) {
+          this.transcriptStore.clear(mapping.claudeSessionId);
+        }
+        await dispatcher.deliver({ text: "Session context cleared." });
+        return;
+      }
+      if (cmdResult && isReplyOnlyCommand(cmdResult)) {
+        await dispatcher.deliver({ text: cmdResult.action === "reply_only" ? cmdResult.text : "" });
+        return;
+      }
+
+      let prompt = inboundToPrompt(finalized.body, finalized.media);
+      if (cmdResult) {
+        prompt = applyCommandResult(cmdResult, prompt);
+      }
+
+      const mapping = this.options.sessionMapper.get(route.sessionKey);
+      this.options.sessionMapper.upsert({
+        sessionKey: route.sessionKey,
+        claudeSessionId: mapping?.claudeSessionId,
+        workspace: route.workspace ?? mapping?.workspace,
+        agentId: route.agentId,
+        channel: route.channel,
+        accountId: route.accountId,
+        peerId: finalized.peerId,
+        updatedAt: new Date().toISOString(),
+      });
+
+      const stream = new StreamAdapter(dispatcher, { verboseTools: false });
+      let sessionId = mapping?.claudeSessionId;
+
+      const channelAgent = agentConfigForChannel(this.options.config.agent);
+      const channelBridge = new PermissionBridge(channelAgent);
+      const permissionHandler = createPermissionHandler(channelBridge);
+      const cwd = route.workspace ?? this.options.config.agent.cwd ?? process.cwd();
+
+      for await (const evt of this.options.engine.run({
+        prompt,
+        sessionId,
+        cwd,
+        resume: Boolean(sessionId),
+        permissionMode: channelAgent.permissionMode,
+        permissionHandler,
+      })) {
+        await stream.handleEvent(evt);
+        if (evt.type === "session_id") {
+          sessionId = evt.sessionId;
+          this.options.sessionMapper.setClaudeSessionId(route.sessionKey, evt.sessionId);
+        }
+      }
+
+      await stream.flushFinal();
+      await this.markFeishuDone(finalized);
+      this.log("info", `handled ${finalized.channelId} peer=${finalized.peerId}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log("error", `inbound failed: ${msg}`);
+      try {
+        await dispatcher.deliver({
+          text: `Error: ${msg.slice(0, 500)}`,
+        });
+      } catch {
+        // ignore double failure
+      }
+    }
+  }
+
+  private async markFeishuDone(message: InboundMessage): Promise<void> {
+    if (message.channelId !== "feishu" || !message.sourceMessageId) return;
+    try {
+      await feishuReactToMessage(
+        this.options.config,
+        message.accountId,
+        message.sourceMessageId,
+        "THUMBSUP",
+      );
+    } catch {
+      // best-effort completion reaction
+    }
+  }
+
+  getPairingStore(): PairingStore {
+    return this.pairingStore;
+  }
+}
+
+export function createMessagePipeline(options: MessagePipelineOptions): MessagePipeline {
+  return new MessagePipeline(options);
+}
+
+export type { PairingRecord } from "./pairing-store.js";
+export { PairingStore } from "./pairing-store.js";
+export { SessionLock } from "./session-lock.js";
+
+/** @deprecated use PairingStore from pairing-store.js */
+export type ThreadBinding = {
+  sessionKey: string;
+  threadId: string;
+  channel: string;
+  peerId: string;
+};
+
+export class ThreadBindingStore {
+  private bindings = new Map<string, ThreadBinding>();
+
+  bind(binding: ThreadBinding): void {
+    this.bindings.set(binding.threadId, binding);
+  }
+
+  get(threadId: string): ThreadBinding | undefined {
+    return this.bindings.get(threadId);
+  }
+}

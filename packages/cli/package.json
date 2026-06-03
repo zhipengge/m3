@@ -1,0 +1,32 @@
+{
+  "name": "@m3/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "m3": "./dist/cli.js"
+  },
+  "main": "./dist/cli.js",
+  "types": "./dist/cli.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "node --import tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@m3/agent": "workspace:*",
+    "@m3/bridge": "workspace:*",
+    "@m3/channel-extensions": "workspace:*",
+    "@m3/channels": "workspace:*",
+    "@m3/commands": "workspace:*",
+    "@m3/config": "workspace:*",
+    "@m3/gateway": "workspace:*",
+    "@m3/plugin-sdk": "workspace:*",
+    "commander": "^13.1.0",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/qrcode-terminal": "^0.12.2",
+    "tsx": "^4.19.4"
+  }
+}
