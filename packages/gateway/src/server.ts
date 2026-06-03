@@ -12,6 +12,7 @@ import { registerBundledChannels } from "@m3/channel-extensions";
 import { loadM3PluginsFromConfig } from "@m3/plugin-sdk";
 import type { InboundMessage } from "@m3/channels";
 import type { M3Config } from "@m3/config";
+import { prepareInferenceBackend } from "@m3/local";
 import {
   GATEWAY_PROTOCOL_VERSION,
   type AgentRequestParams,
@@ -58,6 +59,10 @@ export class GatewayServer {
       console.log(
         `[m3] plugins: ${plugins.pluginIds.join(", ")} (tools: ${plugins.toolNames.length}, commands: ${plugins.commandNames.length})`,
       );
+    }
+
+    if (!this.options.mockAgent) {
+      await prepareInferenceBackend(this.options.config);
     }
 
     const engine = createAgentEngine({

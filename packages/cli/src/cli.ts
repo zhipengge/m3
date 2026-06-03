@@ -29,11 +29,14 @@ import { loadMcpConfig, mergeMcpServers } from "@m3/agent";
 import { listChannels, runChannelsWizard } from "./channels-wizard.js";
 import { installCompletion, printCompletion } from "./completion.js";
 import { runGatewayRepl } from "./gateway-repl.js";
+import { createInteractiveRepl } from "./interactive-repl.js";
 import { runFeishuScanSetup } from "./scan-setup.js";
+import { registerLocalCommand } from "./local-command.js";
+import { getLocalStatus, prepareInferenceBackend } from "@m3/local";
 
 const program = new Command();
 
-program.name("m3").description("m3 Agent Coder — native harness + multi-channel").version("0.2.0");
+program.name("m3").description("m3 — multi-modality, multi-task, multi-agent framework").version("0.2.0");
 
 function findRepoRoot(): string {
   let dir = path.dirname(fileURLToPath(import.meta.url));
@@ -64,6 +67,9 @@ async function startGateway(opts: {
     const config = loadConfig(opts.config);
     if (opts.port) {
       config.gateway.port = Number(opts.port);
+    }
+    if (!opts.mock) {
+      await prepareInferenceBackend(config);
     }
     const { bind, port } = config.gateway;
 
@@ -134,23 +140,36 @@ program
       process.exit(1);
     }
     const config = loadConfig(opts.config);
+    if (!opts.mock) {
+      await prepareInferenceBackend(config);
+    }
     await loadM3PluginsFromConfig(config);
     const agentConfig = opts.model ? { ...config.agent, model: opts.model } : config.agent;
     const engine = createAgentEngine({ config: agentConfig, m3Config: config, mock: opts.mock });
     const text = prompt ?? "";
     let printed = false;
-    for await (const evt of engine.run({ prompt: text })) {
-      if (evt.type === "assistant_delta") {
-        process.stdout.write(evt.delta);
-        printed = true;
+    try {
+      for await (const evt of engine.run({
+        prompt: text,
+        permissionMode: "bypassPermissions",
+      })) {
+        if (evt.type === "assistant_delta") {
+          process.stdout.write(evt.delta);
+          printed = true;
+        }
+        if (evt.type === "result" && evt.text) {
+          if (!printed) process.stdout.write(evt.text);
+          process.stdout.write("\n");
+        }
+        if (evt.type === "lifecycle" && evt.phase === "error") {
+          console.error(`\nError: ${evt.error ?? "unknown"}`);
+          process.exit(1);
+        }
       }
-      if (evt.type === "result" && evt.text) {
-        if (!printed) process.stdout.write(evt.text);
-        process.stdout.write("\n");
-      }
-      if (evt.type === "lifecycle" && evt.phase === "error") {
-        console.error(`\nError: ${evt.error ?? "unknown"}`);
-        process.exit(1);
+    } finally {
+      if (!opts.mock) {
+        const { resetMcpPool } = await import("@m3/agent");
+        await resetMcpPool();
       }
     }
   });
@@ -229,6 +248,21 @@ program
     const chMode = config.agent.channelPermissionMode ?? "bypassPermissions";
     console.log(`Channel permission mode: ${chMode} (Feishu/Slack/WebChat inbound)`);
     console.log(`Slash commands: ${listCommands().length}`);
+
+    try {
+      const local = await getLocalStatus();
+      if (local.state) {
+        console.log(`\nLocal model: ${local.modelReady ? "weights ready" : "weights incomplete"}, server ${local.healthOk ? "running" : "stopped"}`);
+        if (local.state && !local.healthOk && config.agent.model.startsWith("local/")) {
+          console.log("  Run: m3 local start");
+        }
+      } else if (config.agent.model.startsWith("local/") || config.models.default.startsWith("local/")) {
+        console.log("\nLocal model: not set up — run: m3 local");
+      }
+    } catch {
+      /* ignore */
+    }
+
     console.log("\nDoctor: OK — see docs/CHANNELS.md for channel setup");
   });
 
@@ -298,6 +332,8 @@ channels
     console.log(`Config: ${resolveConfigPath(opts.config)}`);
     listChannels(config);
   });
+
+registerLocalCommand(program);
 
 channels
   .command("scan")
@@ -379,33 +415,35 @@ program
       process.exit(1);
     }
 
+    if (!opts.mock) {
+      await prepareInferenceBackend(config);
+    }
+
     const server = await createGatewayServer({ config, mockAgent: opts.mock });
     await server.start();
     console.log(`Gateway: http://${config.gateway.bind}:${config.gateway.port}/health`);
 
-    const readline = await import("node:readline");
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const peer = opts.peer ?? "local-user";
+    console.log(`WebChat REPL (peer=${peer}).`);
 
-    registerWebChatClient(opts.peer ?? "local-user", (text) => {
-      console.log(`\n[assistant] ${text}\n`);
-      rl.prompt();
-    });
-
-    console.log(`WebChat REPL (peer=${opts.peer}). Type a message and press Enter.`);
-
-    rl.setPrompt("you> ");
-    rl.prompt();
-
-    rl.on("line", (line) => {
-      void (async () => {
+    const rl = createInteractiveRepl({
+      prompt: "you> ",
+      repromptAfterSubmit: false,
+      onLine: async (line) => {
         const runtime = {
           config,
           log: () => {},
           onInbound: (msg: import("@m3/channels").InboundMessage) => server.dispatchInbound(msg),
         };
-        await simulateWebChatInbound(runtime, opts.peer ?? "local-user", line);
-      })();
+        await simulateWebChatInbound(runtime, peer, line.trim());
+      },
     });
+
+    registerWebChatClient(peer, (text) => {
+      console.log(`\n[assistant] ${text}\n`);
+      rl.prompt();
+    });
+    rl.prompt();
 
     process.on("SIGINT", async () => {
       await server.stop();

@@ -1,5 +1,9 @@
 import type { AgentEngine } from "@m3/agent";
-import { SessionMessageStore } from "@m3/agent";
+import {
+  SessionMessageStore,
+  compressConversationHistory,
+  estimateContextUsageRatio,
+} from "@m3/agent";
 import { feishuReactToMessage } from "@m3/channel-extensions";
 import {
   createReplyDispatcher,
@@ -9,11 +13,13 @@ import {
   type InboundMessage,
 } from "@m3/channels";
 import type { M3Config } from "@m3/config";
-import { parseSlashCommand } from "@m3/commands";
+import { loadSecrets, resolveModel } from "@m3/config";
+import { GoalStore, parseSlashCommand } from "@m3/commands";
 import {
   applyCommandResult,
   CommandBridge,
   isClearSessionCommand,
+  isCompactSessionCommand,
   isReplyOnlyCommand,
 } from "./command-bridge.js";
 import { agentConfigForChannel } from "./channel-permissions.js";
@@ -63,6 +69,7 @@ export class MessagePipeline {
   private readonly pairingStore: PairingStore;
   private readonly sessionLock: SessionLock;
   private readonly transcriptStore = new SessionMessageStore();
+  private readonly goalStore = new GoalStore();
 
   constructor(private readonly options: MessagePipelineOptions) {
     this.pairingStore = options.pairingStore ?? new PairingStore();
@@ -167,20 +174,66 @@ export class MessagePipeline {
         // best-effort ack
       }
 
+      const mapping = this.options.sessionMapper.get(route.sessionKey);
+      const priorMessages = mapping?.claudeSessionId
+        ? this.transcriptStore.load(mapping.claudeSessionId)
+        : [];
+      let contextUsageRatio: number | undefined;
+      try {
+        const secrets = loadSecrets();
+        const resolved = resolveModel(
+          this.options.config,
+          secrets,
+          this.options.config.agent.model,
+        );
+        contextUsageRatio = estimateContextUsageRatio({
+          messages: priorMessages,
+          maxContextTokens: resolved.maxContextTokens,
+          maxOutputTokens: resolved.maxTokens,
+          system: "",
+          toolsJsonLength: 4000,
+        });
+      } catch {
+        /* ignore */
+      }
+
       const cmdBridge = new CommandBridge({
         config: this.options.config,
         sessionKey: route.sessionKey,
         channel: finalized.channelId,
+        claudeSessionId: mapping?.claudeSessionId,
+        messageCount: priorMessages.length,
+        contextUsageRatio,
       });
 
       const cmdResult = cmdBridge.tryHandle(finalized.body);
       if (cmdResult && isClearSessionCommand(cmdResult)) {
-        const mapping = this.options.sessionMapper.get(route.sessionKey);
         this.options.sessionMapper.remove(route.sessionKey);
+        this.goalStore.clear(route.sessionKey);
         if (mapping?.claudeSessionId) {
           this.transcriptStore.clear(mapping.claudeSessionId);
         }
         await dispatcher.deliver({ text: "Session context cleared." });
+        return;
+      }
+      if (cmdResult && isCompactSessionCommand(cmdResult)) {
+        if (!mapping?.claudeSessionId || priorMessages.length === 0) {
+          await dispatcher.deliver({ text: "No conversation history to compact yet." });
+          return;
+        }
+        const { messages, summarizedTurns } = compressConversationHistory(priorMessages);
+        this.transcriptStore.save(mapping.claudeSessionId, messages);
+        const focus = cmdResult.action === "compact_session" ? cmdResult.focus : undefined;
+        await dispatcher.deliver({
+          text: [
+            `Context compacted: ${priorMessages.length} → ${messages.length} message(s).`,
+            summarizedTurns > 0 ? `Summarized ${summarizedTurns} earlier turn(s).` : "",
+            focus ? `Focus hint: ${focus}` : "",
+            "Auto-compress also runs when usage reaches 90% of the context window.",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        });
         return;
       }
       if (cmdResult && isReplyOnlyCommand(cmdResult)) {
@@ -193,7 +246,6 @@ export class MessagePipeline {
         prompt = applyCommandResult(cmdResult, prompt);
       }
 
-      const mapping = this.options.sessionMapper.get(route.sessionKey);
       this.options.sessionMapper.upsert({
         sessionKey: route.sessionKey,
         claudeSessionId: mapping?.claudeSessionId,
@@ -229,14 +281,37 @@ export class MessagePipeline {
       }
 
       await stream.flushFinal();
+
+      const activeGoal = this.goalStore.get(route.sessionKey);
+      if (activeGoal && sessionId) {
+        const transcript = this.transcriptStore.load(sessionId);
+        const lastAssistant = [...transcript]
+          .reverse()
+          .find((m) => m.role === "assistant");
+        const lastText =
+          typeof lastAssistant?.content === "string"
+            ? lastAssistant.content
+            : JSON.stringify(lastAssistant?.content ?? "");
+        if (/goal_met/i.test(lastText)) {
+          this.goalStore.clear(route.sessionKey);
+          await dispatcher.deliver({ text: "◎ Goal met — goal cleared." });
+        } else if (activeGoal.turns < 8) {
+          this.goalStore.incrementTurn(route.sessionKey);
+          await dispatcher.deliver({
+            text: `◎ Goal active (${activeGoal.turns + 1} turns): ${activeGoal.condition}\nSend another message or /goal clear to stop.`,
+          });
+        }
+      }
+
       await this.markFeishuDone(finalized);
       this.log("info", `handled ${finalized.channelId} peer=${finalized.peerId}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log("error", `inbound failed: ${msg}`);
+      const userMsg = formatInboundError(msg);
       try {
         await dispatcher.deliver({
-          text: `Error: ${msg.slice(0, 500)}`,
+          text: userMsg,
         });
       } catch {
         // ignore double failure
@@ -261,6 +336,18 @@ export class MessagePipeline {
   getPairingStore(): PairingStore {
     return this.pairingStore;
   }
+}
+
+function formatInboundError(msg: string): string {
+  const lower = msg.toLowerCase();
+  if (lower.includes("context size") || lower.includes("context window") || lower.includes("exceeds the available context")) {
+    return [
+      "Error: prompt is too long for the current model context.",
+      "Try: /clear — then send a shorter message.",
+      "Local model: m3 local stop && m3 local --ctx-size 32768",
+    ].join("\n");
+  }
+  return `Error: ${msg.slice(0, 500)}`;
 }
 
 export function createMessagePipeline(options: MessagePipelineOptions): MessagePipeline {

@@ -43,6 +43,11 @@ export class StreamAdapter {
           await this.dispatcher.startTyping?.();
         }
         break;
+      case "context_compressed":
+        await this.dispatcher.deliver({
+          text: `(context compressed: ${event.summarizedTurns} earlier turn(s) summarized, ${event.keptMessages} message(s) kept)`,
+        });
+        break;
       default:
         break;
     }

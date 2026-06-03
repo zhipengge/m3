@@ -60,6 +60,7 @@ export type HarnessEvent =
   | { type: "tool_result"; id: string; name: string; output: string; isError?: boolean }
   | { type: "session_id"; sessionId: string }
   | { type: "lifecycle"; phase: "start" | "end" | "error"; error?: string }
+  | { type: "context_compressed"; keptMessages: number; summarizedTurns: number }
   | { type: "turn_complete"; turn: number };
 
 export type QueryLoopOptions = {

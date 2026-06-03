@@ -21,6 +21,7 @@
     "@m3/commands": "workspace:*",
     "@m3/config": "workspace:*",
     "@m3/gateway": "workspace:*",
+    "@m3/local": "workspace:*",
     "@m3/plugin-sdk": "workspace:*",
     "commander": "^13.1.0",
     "qrcode-terminal": "^0.12.0"

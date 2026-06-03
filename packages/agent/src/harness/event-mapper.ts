@@ -15,6 +15,14 @@ export function mapHarnessEvent(evt: HarnessEvent): AgentStreamEvent[] {
       return [{ type: "session_id", sessionId: evt.sessionId }];
     case "lifecycle":
       return [{ type: "lifecycle", phase: evt.phase, error: evt.error }];
+    case "context_compressed":
+      return [
+        {
+          type: "context_compressed",
+          keptMessages: evt.keptMessages,
+          summarizedTurns: evt.summarizedTurns,
+        },
+      ];
     case "turn_complete":
       return [];
     default:

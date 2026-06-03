@@ -1,6 +1,6 @@
-# m3 Agent Architecture
+# m3 Architecture
 
-m3 = **多 Agent · 多模态 · 多 Task**。使用 **自研 in-process Agent Harness**，不依赖 Claude Code CLI 子进程，并通过统一的 `ToolProvider` 聚合层兼容 Claude Code / OpenClaw 生态（工具、Skill、MCP、插件）。
+m3 = **多模态 · 多任务 · 多智能体框架**（Multi-modality · Multi-task · Multi-agent）。使用 **自研 in-process Agent Harness**，不依赖 Claude Code CLI 子进程，并通过统一的 `ToolProvider` 聚合层兼容 Claude Code / OpenClaw 生态（工具、Skill、MCP、插件）。
 
 ## 分层架构
 

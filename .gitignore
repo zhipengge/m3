@@ -30,6 +30,9 @@ m3.local.json
 sessions.json
 pairing.json
 gateway.pid
+llama-server.pid
+local.json
+**/runtime/
 **/media/
 
 # Logs & debug

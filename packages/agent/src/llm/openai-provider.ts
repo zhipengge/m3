@@ -90,10 +90,17 @@ export class OpenAiChatProvider implements LlmProvider {
     let text = "";
     const toolCalls = new Map<number, { id: string; name: string; args: string }>();
 
+    const idleMs = 90_000;
+    let lastChunkAt = Date.now();
+
     for await (const chunk of stream) {
       if (params.abortSignal?.aborted) break;
+      if (Date.now() - lastChunkAt > idleMs) break;
       const choice = chunk.choices[0];
       if (!choice) continue;
+      lastChunkAt = Date.now();
+
+      if (choice.finish_reason === "stop") break;
 
       if (choice.delta.content) {
         text += choice.delta.content;
@@ -116,6 +123,7 @@ export class OpenAiChatProvider implements LlmProvider {
     if (text) assistantContent.push({ type: "text", text });
 
     for (const tc of toolCalls.values()) {
+      if (!tc.name.trim()) continue;
       let input: unknown = {};
       try {
         input = tc.args ? JSON.parse(tc.args) : {};

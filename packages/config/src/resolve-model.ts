@@ -19,13 +19,17 @@ export function resolveModel(
     throw new Error(`Unknown model "${modelId}" for provider "${providerId}"`);
   }
 
-  const apiKey = resolveProviderApiKey(providerId, provider.apiKeyEnv, secrets);
+  let apiKey = resolveProviderApiKey(providerId, provider.apiKeyEnv, secrets);
+  if (!apiKey && provider.localOnly) {
+    apiKey = "local";
+  }
   if (!apiKey) {
     throw new Error(
       `No API key for provider "${providerId}". Set ~/.m3/secrets.json or env ${provider.apiKeyEnv ?? `M3_${providerId.toUpperCase()}_API_KEY`}`,
     );
   }
 
+  const maxTokens = modelEntry.maxTokens ?? 8192;
   return {
     ref,
     providerId,
@@ -33,7 +37,8 @@ export function resolveModel(
     api: provider.api,
     baseUrl: provider.baseUrl,
     apiKey,
-    maxTokens: modelEntry.maxTokens ?? 8192,
+    maxTokens,
+    maxContextTokens: modelEntry.maxContextTokens ?? maxTokens * 4,
     alias: modelEntry.alias,
   };
 }

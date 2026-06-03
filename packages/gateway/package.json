@@ -21,6 +21,7 @@
     "@m3/channel-extensions": "workspace:*",
     "@m3/channels": "workspace:*",
     "@m3/config": "workspace:*",
+    "@m3/local": "workspace:*",
     "@m3/gateway-protocol": "workspace:*",
     "@m3/plugin-sdk": "workspace:*",
     "ws": "^8.18.2"

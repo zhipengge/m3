@@ -20,6 +20,7 @@ export type AgentStreamEvent =
   | { type: "tool_result"; name: string; output?: string }
   | { type: "session_id"; sessionId: string }
   | { type: "lifecycle"; phase: "start" | "end" | "error"; error?: string }
+  | { type: "context_compressed"; keptMessages: number; summarizedTurns: number }
   | { type: "result"; text: string; sessionId?: string; usage?: Record<string, number> };
 
 export type AgentRunResult = {

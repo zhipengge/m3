@@ -1,3 +1,4 @@
+import { prepareMessagesForContext } from "../context-trim.js";
 import { getLlmProvider } from "../llm/router.js";
 import { DEFAULT_SYSTEM_PROMPT } from "../llm/types.js";
 import { PermissionManager } from "../permissions/manager.js";
@@ -45,6 +46,8 @@ export async function* runQueryLoop(
     ? `${DEFAULT_SYSTEM_PROMPT}\n\nYou are in PLAN MODE. Do not modify files or run destructive commands. Propose a plan only.`
     : DEFAULT_SYSTEM_PROMPT;
   const system = options.extraSystem ? `${base}\n\n${options.extraSystem}` : base;
+  const toolDefs = tools.map(toolToAnthropicDef);
+  const toolsJsonLength = JSON.stringify(toolDefs).length;
 
   while (turns < options.maxTurns) {
     if (options.abortSignal?.aborted) {
@@ -54,11 +57,28 @@ export async function* runQueryLoop(
 
     turns++;
 
+    const prepared = prepareMessagesForContext({
+      messages,
+      maxContextTokens: options.model.maxContextTokens,
+      maxOutputTokens: options.model.maxTokens,
+      system,
+      toolsJsonLength,
+    });
+    if (prepared.compressed) {
+      messages.splice(0, messages.length, ...prepared.sessionMessages);
+      yield {
+        type: "context_compressed",
+        keptMessages: prepared.sessionMessages.length,
+        summarizedTurns: prepared.summarizedTurns,
+      };
+    }
+    const apiMessages = prepared.apiMessages;
+
     const turn = await llm.completeTurn(
       {
         model: options.model,
-        messages,
-        tools: tools.map(toolToAnthropicDef),
+        messages: apiMessages,
+        tools: toolDefs,
         system,
         abortSignal: options.abortSignal,
       },

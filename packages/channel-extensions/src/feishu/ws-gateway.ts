@@ -32,6 +32,8 @@ export async function startFeishuLongConnection(params: {
     loggerLevel: Lark.LoggerLevel.error,
   });
 
+  const noopEvent = async (): Promise<void> => {};
+
   const eventDispatcher = new Lark.EventDispatcher({}).register({
     "im.message.receive_v1": async (data: unknown) => {
       try {
@@ -47,6 +49,9 @@ export async function startFeishuLongConnection(params: {
         );
       }
     },
+    /** Ack-only events — avoid Lark SDK "no handle" warnings. */
+    "im.message.reaction.created_v1": noopEvent,
+    "im.message.message_read_v1": noopEvent,
   });
 
   await wsClient.start({ eventDispatcher });

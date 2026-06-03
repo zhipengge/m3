@@ -5,6 +5,9 @@ export type CommandBridgeContext = {
   config: M3Config;
   sessionKey: string;
   channel: string;
+  claudeSessionId?: string;
+  messageCount?: number;
+  contextUsageRatio?: number;
 };
 
 export class CommandBridge {
@@ -17,6 +20,9 @@ export class CommandBridge {
       config: this.ctx.config,
       sessionKey: this.ctx.sessionKey,
       channel: this.ctx.channel,
+      claudeSessionId: this.ctx.claudeSessionId,
+      messageCount: this.ctx.messageCount,
+      contextUsageRatio: this.ctx.contextUsageRatio,
     });
   }
 }
@@ -24,6 +30,12 @@ export class CommandBridge {
 export function applyCommandResult(result: CommandResult, originalBody: string): string {
   if (result.action === "inject_prompt") {
     return result.prompt;
+  }
+  if (result.action === "set_goal") {
+    return [
+      `[goal] Work toward this completion condition until it is satisfied: ${result.condition}`,
+      "When fully done, say GOAL_MET in your reply.",
+    ].join("\n");
   }
   if (result.action === "reply_only") {
     return result.text;
@@ -40,4 +52,12 @@ export function isReplyOnlyCommand(result: CommandResult): boolean {
 
 export function isClearSessionCommand(result: CommandResult): boolean {
   return result.action === "clear_session";
+}
+
+export function isCompactSessionCommand(result: CommandResult): boolean {
+  return result.action === "compact_session";
+}
+
+export function isSetGoalCommand(result: CommandResult): boolean {
+  return result.action === "set_goal";
 }

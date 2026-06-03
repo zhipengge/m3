@@ -113,6 +113,9 @@ importers:
       '@m3/gateway':
         specifier: workspace:*
         version: link:../gateway
+      '@m3/local':
+        specifier: workspace:*
+        version: link:../local
       '@m3/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
@@ -162,6 +165,9 @@ importers:
       '@m3/gateway-protocol':
         specifier: workspace:*
         version: link:../gateway-protocol
+      '@m3/local':
+        specifier: workspace:*
+        version: link:../local
       '@m3/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
@@ -174,6 +180,12 @@ importers:
         version: 8.18.1
 
   packages/gateway-protocol: {}
+
+  packages/local:
+    dependencies:
+      '@m3/config':
+        specifier: workspace:*
+        version: link:../config
 
   packages/plugin-sdk:
     dependencies:

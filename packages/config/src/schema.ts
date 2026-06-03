@@ -110,11 +110,22 @@ export const BindingSchema = z.object({
 
 export const HooksConfigSchema = z.record(z.unknown()).optional();
 
+export const LocalRuntimeConfigSchema = z.object({
+  /** Preset id (e.g. qwen3-vl-4b-instruct) or slug under local/<id>. */
+  model: z.string().optional(),
+  /** Hugging Face / ModelScope repo id (Org/Name-GGUF). */
+  repo: z.string().optional(),
+  /** llama-server --ctx-size (default 32768 for Qwen3-VL local). */
+  ctxSize: z.number().int().min(4096).max(131_072).optional(),
+  serverPort: z.number().int().min(1).max(65535).optional(),
+});
+
 export const M3ConfigSchema = z.object({
   $schema: z.literal("m3-config-v1").optional(),
   gateway: GatewayConfigSchema.default({}),
   models: ModelsConfigSchema.default({}),
   agent: AgentConfigSchema.default({}),
+  local: LocalRuntimeConfigSchema.optional(),
   channels: ChannelsConfigSchema.default({}),
   bindings: z.array(BindingSchema).default([]),
   hooks: HooksConfigSchema,

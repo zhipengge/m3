@@ -1,4 +1,5 @@
 import type { M3Config } from "@m3/config";
+import { GoalStore } from "./goal-store.js";
 
 export type ParsedSlashCommand = {
   name: string;
@@ -9,45 +10,103 @@ export type CommandContext = {
   config: M3Config;
   sessionKey: string;
   channel: string;
+  /** Active harness session id (transcript file). */
+  claudeSessionId?: string;
+  /** Message count in current transcript. */
+  messageCount?: number;
+  /** Estimated context fill ratio 0–1+. */
+  contextUsageRatio?: number;
+  goalStore?: GoalStore;
 };
 
 export type CommandResult =
   | { action: "reply_only"; text: string }
   | { action: "inject_prompt"; prompt: string }
   | { action: "clear_session" }
+  | { action: "compact_session"; focus?: string }
+  | { action: "set_goal"; condition: string }
   | { action: "passthrough" };
 
 export type CommandHandler = (args: string, ctx: CommandContext) => CommandResult;
+
+const GOAL_CLEAR_RE = /^(clear|stop|off|reset|none|cancel)$/i;
+
+function formatContextUsage(ctx: CommandContext): string {
+  const ratio = ctx.contextUsageRatio;
+  const pct = ratio !== undefined ? `${Math.min(100, Math.round(ratio * 100))}%` : "unknown";
+  const auto = ratio !== undefined && ratio >= 0.9 ? " (auto-compress at 90%)" : "";
+  return [
+    `Session: ${ctx.sessionKey}`,
+    `Channel: ${ctx.channel}`,
+    `Engine: ${ctx.config.agent.engine}`,
+    `Model: ${ctx.config.agent.model}`,
+    `Messages in transcript: ${ctx.messageCount ?? 0}`,
+    `Context usage: ~${pct}${auto}`,
+  ].join("\n");
+}
 
 const BUILTIN_COMMANDS: Record<string, CommandHandler> = {
   help: () => ({
     action: "reply_only",
     text: [
-      "m3 commands:",
+      "m3 slash commands (Claude Code–style):",
       "/help — this message",
-      "/status — session status",
-      "/clear — clear context hint",
-      "/compact — compact conversation",
-      "/plan — enter plan mode",
-      "/model <name> — switch model",
-      "/permissions — show permission mode",
-      "/mcp — MCP status",
-      "/skills — skill dirs",
+      "/status — session + model",
+      "/context — context window usage",
+      "/clear — clear session (aliases: /reset, /new)",
+      "/compact [focus] — compress conversation history",
+      "/goal [condition|clear] — set or clear a session goal",
+      "/plan — plan mode prompt",
+      "/model <ref> — show model ref",
+      "/permissions — permission mode",
       "/doctor — run m3 doctor",
-      "/pair <code> — approve DM pairing (when dmPolicy=pairing)",
-      "/compact — compact context",
-      "/clear — fresh context",
+      "/mcp · /skills · /agents · /hooks · /memory · /review · /config · /resume · /export · /init · /cost",
     ].join("\n"),
   }),
   status: (_args, ctx) => ({
     action: "reply_only",
-    text: `Session: ${ctx.sessionKey}\nChannel: ${ctx.channel}\nEngine: ${ctx.config.agent.engine}\nModel: ${ctx.config.agent.model}`,
+    text: formatContextUsage(ctx),
+  }),
+  context: (_args, ctx) => ({
+    action: "reply_only",
+    text: formatContextUsage(ctx),
   }),
   clear: () => ({ action: "clear_session" }),
-  compact: () => ({
-    action: "inject_prompt",
-    prompt: "[system] User requested /compact. Summarize and compact prior context.",
+  reset: () => ({ action: "clear_session" }),
+  new: () => ({ action: "clear_session" }),
+  compact: (args) => ({
+    action: "compact_session",
+    focus: args.trim() || undefined,
   }),
+  goal: (args, ctx) => {
+    const store = ctx.goalStore ?? new GoalStore();
+    const trimmed = args.trim();
+    if (!trimmed) {
+      const active = store.get(ctx.sessionKey);
+      if (!active) {
+        return {
+          action: "reply_only",
+          text: "No active goal. Usage: /goal <completion condition>  e.g. /goal all tests pass",
+        };
+      }
+      return {
+        action: "reply_only",
+        text: `Active goal: ${active.condition}\nTurns: ${active.turns}\nClear: /goal clear`,
+      };
+    }
+    if (GOAL_CLEAR_RE.test(trimmed)) {
+      const cleared = store.clear(ctx.sessionKey);
+      return {
+        action: "reply_only",
+        text: cleared ? "Goal cleared." : "No active goal.",
+      };
+    }
+    store.set(ctx.sessionKey, trimmed);
+    return {
+      action: "set_goal",
+      condition: trimmed,
+    };
+  },
   plan: () => ({
     action: "inject_prompt",
     prompt: "[plan mode] Propose a detailed plan before making any file changes or running commands.",
@@ -56,12 +115,12 @@ const BUILTIN_COMMANDS: Record<string, CommandHandler> = {
     const model = args.trim() || ctx.config.agent.model;
     return {
       action: "reply_only",
-      text: `Model set to: ${model} (persist via ~/.m3/m3.json)`,
+      text: `Model: ${model}\nPersist changes in ~/.m3/m3.json (models.default / agent.model).`,
     };
   },
   permissions: (_args, ctx) => ({
     action: "reply_only",
-    text: `Permission mode: ${ctx.config.agent.permissionMode}`,
+    text: `Permission mode: ${ctx.config.agent.permissionMode}\nChannel inbound: ${ctx.config.agent.channelPermissionMode ?? "bypassPermissions"}`,
   }),
 };
 
@@ -79,16 +138,12 @@ const PHASE2_COMMANDS: Record<string, CommandHandler> = {
   skills: () => ({ action: "reply_only", text: "Skills: configure via agent.skills.dirs" }),
   agents: () => ({ action: "reply_only", text: "Sub-agents enabled via agent.subAgents" }),
   hooks: () => ({ action: "reply_only", text: "Hooks: configure via hooks in m3.json" }),
-  memory: () => ({ action: "reply_only", text: "Memory: uses Claude Code CLAUDE.md / memdir" }),
+  memory: () => ({ action: "reply_only", text: "Memory: uses CLAUDE.md / project memory files" }),
   review: () => ({
     action: "inject_prompt",
     prompt: "Review the recent code changes and provide feedback.",
   }),
   doctor: () => ({ action: "reply_only", text: "Run: m3 doctor" }),
-  context: () => ({
-    action: "reply_only",
-    text: "Context: managed by native harness session store (~/.m3/transcripts).",
-  }),
   cost: () => ({ action: "reply_only", text: "Cost tracking: configure model provider billing in m3.json." }),
   init: (_args, ctx) => ({
     action: "reply_only",
@@ -135,3 +190,5 @@ export function listCommands(): string[] {
 export function registerCommand(name: string, handler: CommandHandler): void {
   ALL_COMMANDS[name.toLowerCase()] = handler;
 }
+
+export { GoalStore } from "./goal-store.js";

@@ -2,7 +2,7 @@
   "name": "m3",
   "version": "0.2.0",
   "private": true,
-  "description": "m3 Agent Coder — native harness + multi-channel",
+  "description": "m3 — multi-modality, multi-task, multi-agent framework",
   "type": "module",
   "bin": {
     "m3": "./bin/m3.js"
@@ -16,6 +16,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "verify:e2e": "node scripts/verify-e2e.mjs",
+    "verify:local": "node scripts/verify-local.mjs",
     "verify:e2e:live": "node scripts/verify-e2e.mjs --live-agent",
     "verify:hello-plugin": "node scripts/verify-hello-plugin.mjs",
     "verify:mcp": "node scripts/verify-mcp.mjs",

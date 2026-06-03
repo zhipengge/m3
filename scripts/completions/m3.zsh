@@ -14,6 +14,7 @@ _m3() {
     'channels:Configure Feishu / Slack / WebChat'
     'webchat:Local webchat test REPL'
     'completion:Shell completion scripts'
+    'local:Offline Qwen3-VL via llama.cpp'
   )
 
   if (( CURRENT == 1 )); then
@@ -74,6 +75,19 @@ _m3() {
         _describe 'shell' '(zsh bash install)'
         return
       fi
+      ;;
+    local)
+      if (( CURRENT == 2 )); then
+        _describe 'local subcommand' '(download:start:stop:status)'
+        return
+      fi
+      _arguments \
+        '--mirror[Download source]:mirror:(auto huggingface modelscope)' \
+        '--quant[GGUF quant]:quant:(Q4_K_M Q8_0)' \
+        '--port[llama-server port]' \
+        '--skip-download[Skip model download]' \
+        '--no-start[Do not start server]' \
+        '--config[Config file path]'
       ;;
     doctor|status|build|install)
       _arguments '--config[Config file path]'

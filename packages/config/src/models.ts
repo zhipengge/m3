@@ -5,7 +5,10 @@ export const ProviderApiSchema = z.enum(["openai-chat", "anthropic-messages"]);
 
 export const ModelEntrySchema = z.object({
   alias: z.string().optional(),
+  /** Max completion tokens per turn. */
   maxTokens: z.number().int().min(256).max(128_000).optional(),
+  /** Total context window for trimming / local llama --ctx-size hint. */
+  maxContextTokens: z.number().int().min(2048).max(262_144).optional(),
 });
 
 export const ModelProviderSchema = z.object({
@@ -13,6 +16,8 @@ export const ModelProviderSchema = z.object({
   baseUrl: z.string().url().optional(),
   /** Env var name for API key fallback, e.g. M3_DEEPSEEK_API_KEY */
   apiKeyEnv: z.string().optional(),
+  /** Local llama.cpp / offline inference — API key not required. */
+  localOnly: z.boolean().optional(),
   models: z.record(ModelEntrySchema).default({}),
 });
 
@@ -54,6 +59,7 @@ export type ResolvedModel = {
   baseUrl?: string;
   apiKey: string;
   maxTokens: number;
+  maxContextTokens: number;
   alias?: string;
 };
 
