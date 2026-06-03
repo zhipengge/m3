@@ -50,7 +50,7 @@ Dashboard → **Pairing** 面板可查看待配对列表。
 无需 Verification Token、无需 ngrok。默认使用飞书官方 **长连接** 接收事件。
 
 ```bash
-cd /Users/gezhipeng/workspace/m3
+cd /path/to/m3
 pnpm install && pnpm build
 pnpm m3 channels scan
 ```
