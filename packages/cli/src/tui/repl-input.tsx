@@ -16,7 +16,11 @@ export type ReplInputProps = {
   pendingPermission: ReplPermissionRequest | null;
   onResolvePermission: (ok: boolean) => void;
   disabled?: boolean;
-  /** When true, arrow keys select slash commands instead of moving the cursor. */
+  /**
+   * When true, arrow keys / Tab / Esc are routed to the slash palette instead
+   * of the text input. The text input remains focused so the user can keep
+   * typing to filter the list.
+   */
   paletteActive?: boolean;
 };
 
@@ -79,8 +83,14 @@ export function ReplInput(props: ReplInputProps) {
     [onSubmitLine, onInputChange, paletteIdx, paletteSpecs, showPalette],
   );
 
+  // Palette-only key handling. Only intercepts arrows / Tab / Esc; every
+  // other key falls through to the TextInput so the user can keep typing
+  // to filter the list. Keeping the TextInput focused (focus={true}) is
+  // critical: previously we set focus={!paletteActive} which silently
+  // disabled the TextInput's own useInput, dropping all character keys.
   useInput(
     (_char, key) => {
+      if (paletteSpecs.length === 0) return;
       if (key.upArrow) {
         onPaletteIdxChange(paletteIdx <= 0 ? paletteSpecs.length - 1 : paletteIdx - 1);
         return;
@@ -111,7 +121,12 @@ export function ReplInput(props: ReplInputProps) {
     { isActive: Boolean(pendingPermission) },
   );
 
-  const inputFocused = !disabled && !pendingPermission && !paletteActive;
+  // The TextInput stays focused whenever the input is not disabled, so
+  // typing always works. Arrow keys will both move the text cursor and
+  // navigate the palette (we just route them in our useInput above); the
+  // visual effect is harmless because the palette list is what the user
+  // sees, and the input cursor is at the end of the (short) "/foo" string.
+  const inputFocused = !disabled && !pendingPermission;
 
   return (
     <Box flexDirection="column" flexShrink={0} width="100%">
