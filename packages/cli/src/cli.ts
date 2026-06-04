@@ -467,7 +467,7 @@ completionCmd.addHelpText(
 
 program
   .command("install")
-  .description("Run install.sh (macOS, adds m3 to ~/.local/bin)")
+  .description("Run ./install.sh (build, ~/.local/bin/m3, ~/.m3 config)")
   .action(() => {
     const root = findRepoRoot();
     const script = path.join(root, "install.sh");

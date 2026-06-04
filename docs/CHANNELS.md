@@ -15,23 +15,19 @@ m3 gateway -i    # 等价
 ## Tab 自动补全（macOS zsh）
 
 ```bash
-# 安装一次（需 m3 在 PATH：./install.sh 或 export PATH="$HOME/.local/bin:$PATH"）
-m3 completion install
-exec zsh          # 或 source ~/.zshrc
-
-# 验证：输入 m3 然后按 Tab，应列出 chat / gateway / channels …
+./install.sh --with-completion   # 或已安装后：m3 completion install && exec zsh
 ```
 
-若用 `pnpm m3` 而非全局 `m3`，补全不会生效，请用 `install.sh` 安装到 `~/.local/bin`。
+若用 `pnpm m3` 而非全局 `m3`，补全不会生效，请用 `./install.sh` 安装到 `~/.local/bin`。
 
 ## 前置条件
 
 ```bash
-pnpm install && pnpm build && pnpm test
-# 等价：pnpm m3 build（需在仓库内）
-cp examples/m3.json ~/.m3/m3.json
-cp examples/secrets.json.example ~/.m3/secrets.json   # 填入 DeepSeek 等 API Key
+./install.sh
+$EDITOR ~/.m3/secrets.json   # 填入 DeepSeek 等 API Key
 ```
+
+开发者在仓库内也可用 `pnpm install && pnpm build`。
 
 ## DM 配对（dmPolicy: pairing）
 
@@ -51,8 +47,7 @@ Dashboard → **Pairing** 面板可查看待配对列表。
 
 ```bash
 cd /path/to/m3
-pnpm install && pnpm build
-pnpm m3 channels scan
+m3 channels scan
 ```
 
 1. 终端会出现 **二维码**（同一 WiFi 下用手机扫）

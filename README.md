@@ -18,38 +18,87 @@ An agent framework with OpenClaw-style channels, an in-process harness, tools, M
 
 ```bash
 git clone git@github.com:zhipengge/m3.git && cd m3
-./install.sh && export PATH="$HOME/.local/bin:$PATH"
-
-mkdir -p ~/.m3
-cp examples/secrets.json.example ~/.m3/secrets.json   # API keys
-chmod 600 ~/.m3/secrets.json
-cp examples/m3.json ~/.m3/m3.json                     # optional
-
-m3 doctor
+./install.sh
 ```
 
-| Optional | Command |
-|----------|---------|
-| Tab completion | `m3 completion install && exec zsh` (global `m3` only) |
-| Feishu QR setup | `m3 channels scan` |
-| Offline LLM | `m3 local` (GGUF presets or custom repo + llama.cpp; default Qwen3-VL-4B) |
+脚本会完成：依赖安装与构建、把 `m3` 装到 `~/.local/bin`、初始化 `~/.m3/`（`m3.json` + `secrets.json`）、必要时写入 shell 的 PATH。
+
+然后填入 API Key 并启动。**安装刚结束时当前终端还没有 `m3` 命令**（PATH 要 `source` 或新开终端才生效），可任选其一：
+
+```bash
+$EDITOR ~/.m3/secrets.json
+~/.local/bin/m3              # 当前终端立刻可用
+# 或
+source ~/.zshrc && m3        # 之后可直接打 m3（bash 用 ~/.bashrc）
+```
+
+可选步骤：
+
+```bash
+# Tab 补全
+./install.sh --with-completion
+# 或：m3 completion install
+
+# 飞书扫码绑定
+m3 channels scan
+
+# 离线 GGUF（默认 Qwen3-VL-4B，见 docs/LOCAL.md）
+m3 local
+
+# 开发者：跳过 build
+./install.sh --skip-build
+```
 
 Node **≥ 22.19** · macOS / Linux · `tar` / `unzip` for local setup
 
 ## Usage
 
+In the REPL (`›` prompt): natural language or slash commands. **Ctrl+C** exits and shuts down the gateway (press again to force quit if shutdown stalls).
+
+### Core
+
 ```bash
-m3                    # gateway + terminal REPL (default)
-m3 channels scan      # bind Feishu, then run m3
-m3 status             # dashboard → http://127.0.0.1:18790/dashboard
-m3 agent -p "…"       # one-shot, no REPL
-m3 gateway stop       # stop daemon
-m3 models             # list cloud + local models (API key status)
-m3 model              # show active model
-m3 model deepseek-chat   # switch model (writes ~/.m3/m3.json)
+# Gateway + terminal REPL (default)
+m3
+m3 chat
+
+# Health, port, PID, dashboard URL
+m3 doctor
+m3 status
+
+# Start or stop gateway only
+m3 gateway
+m3 gateway stop
+
+# One-shot prompt (no REPL)
+m3 agent -p "…"
 ```
 
-In the REPL (`›` prompt): natural language or slash commands. **Ctrl+C** exits and shuts down the gateway (press again to force quit if shutdown stalls).
+### Channels
+
+```bash
+# Feishu QR onboarding (recommended)
+m3 channels scan
+
+# Wizard · list · remove accounts
+m3 channels configure
+m3 channels list
+m3 channels remove
+```
+
+### Models
+
+```bash
+# List cloud + local models (API key status)
+m3 models
+
+# Show or switch active model (writes ~/.m3/m3.json)
+m3 model
+m3 model deepseek-chat
+m3 model MiniMax-M3
+```
+
+Dashboard: `m3 status` → http://127.0.0.1:18790/dashboard
 
 ### Workspace & permissions
 
@@ -74,37 +123,36 @@ Claude Code–style UI: streaming replies, breathing spinner, slash **command pa
 
 **Reasoning models** (e.g. `MiniMax-M3`, `deepseek-reasoner`) stream a **∴ Thinking…** block before the reply. **Ctrl+O** or `/thinking` toggles expand/collapse; default is expanded (`agent.thinkingDisplay` in `~/.m3/m3.json`).
 
-| Fallback | Command |
-|----------|---------|
-| Plain readline | `m3 chat --plain` or `M3_PLAIN_REPL=1` |
-| Skip workspace prompt (CI) | `M3_SKIP_WORKSPACE_GRANT=1` |
-| Collapsed thinking only | `"thinkingDisplay": "collapsed"` under `agent` |
-
-Shell tab completion: `m3 completion install`.
-
-### Cloud models
-
 ```bash
-m3 models                    # list providers + API key status
-m3 model                     # show active model
-m3 model MiniMax-M3          # switch (writes ~/.m3/m3.json)
+# Plain readline REPL (no Ink)
+m3 chat --plain
+# or: M3_PLAIN_REPL=1 m3 chat
+
+# Skip workspace grant prompt (CI)
+M3_SKIP_WORKSPACE_GRANT=1 m3 chat
+
+# Shell tab completion
+m3 completion install
 ```
 
-Built-in providers: **DeepSeek**, **Anthropic**, **MiniMax** (OpenAI-compatible). See [docs/MINIMAX.md](docs/MINIMAX.md).
+Default reasoning UI is expanded; set `"thinkingDisplay": "collapsed"` under `agent` in `~/.m3/m3.json` to start collapsed.
 
-### Slash commands (Claude Code–style)
+Built-in cloud providers: **DeepSeek**, **Anthropic**, **MiniMax** (OpenAI-compatible). See [docs/MINIMAX.md](docs/MINIMAX.md).
 
-| Command | Action |
-|---------|--------|
-| `/help` | List commands |
-| `/status` · `/context` | Session + model + context window usage (~%, auto-compress at 90%) |
-| `/clear` | Clear session (`/reset`, `/new` aliases) |
-| `/compact [focus]` | Compress transcript history (same algorithm as 90% auto-compress) |
-| `/goal <condition>` | Set a session goal; `/goal` shows it; `/goal clear` clears |
-| `/plan` | Plan-mode prompt |
-| `/model [ref]` | Show active model; switch via `m3 model <ref>` |
-| `/thinking` | Toggle reasoning display (`expand` / `collapse`; Ctrl+O in Ink REPL) |
-| `/mcp` · `/skills` · `/doctor` · … | See `/help` |
+### Slash commands (REPL)
+
+```bash
+/help                    # list commands
+/status                  # session + model + context usage (~%, auto-compress at 90%)
+/context
+/clear                   # clear session (/reset, /new)
+/compact [focus]         # compress transcript history
+/goal <condition>        # set goal; /goal shows; /goal clear clears
+/plan                    # plan-mode prompt
+/model [ref]             # show model; switch via m3 model <ref>
+/thinking                # toggle reasoning display (Ctrl+O in Ink REPL)
+/mcp · /skills · /doctor # see /help
+```
 
 **Contributors:** `pnpm install && pnpm build && pnpm test`
 
@@ -115,25 +163,26 @@ Built-in providers: **DeepSeek**, **Anthropic**, **MiniMax** (OpenAI-compatible)
 Run **local GGUF** models on-device via **llama.cpp** (no cloud API key). Default: **Qwen3-VL-4B-Instruct**; use `--model` for other presets or any Hugging Face / ModelScope repo:
 
 ```bash
-m3 local                              # default qwen3-vl-4b-instruct
+# Full setup (default: qwen3-vl-4b-instruct)
+m3 local
 m3 local --model qwen3-vl-8b-instruct
-m3 local list
-m3 chat
-```
 
-| Command | |
-|---------|--|
-| `m3 local` | Full setup |
-| `m3 local list` | Built-in model presets |
-| `m3 local download` | GGUF weights only |
-| `m3 local start` / `stop` / `status` | Manage llama-server |
+# Presets · download GGUF · manage llama-server
+m3 local list
+m3 local download
+m3 local start
+m3 local stop
+m3 local status
+
+# Chat with local model (auto-starts llama-server)
+m3 chat
+m3 agent -p "hello"
+
+# Smoke test
+node scripts/verify-local.mjs
+```
 
 Details: [**docs/LOCAL.md**](docs/LOCAL.md). Install `aria2` for resume + concurrent GGUF downloads.
-
-```bash
-m3 agent -p "hello"     # one-shot against local model (auto-starts llama-server)
-node scripts/verify-local.mjs   # doctor + slash cmds + local agent smoke test
-```
 
 ## Features
 
@@ -349,22 +398,6 @@ Templates: [`examples/m3.json`](examples/m3.json) · [`examples/secrets.json.exa
 </details>
 
 Channel setup: [**docs/CHANNELS.md**](docs/CHANNELS.md)
-
-## CLI
-
-| Command | |
-|---------|--|
-| `m3` / `m3 chat` | Interactive gateway + REPL |
-| `m3 gateway` | Start gateway |
-| `m3 gateway stop` | Stop gateway |
-| `m3 channels scan` | Feishu QR onboarding |
-| `m3 channels configure` | Channel wizard |
-| `m3 channels list` / `remove` | Manage accounts |
-| `m3 doctor` / `m3 status` | Health · port · PID · dashboard URL |
-| `m3 models` / `m3 model <ref>` | List or switch active LLM |
-| `m3 agent -p "…"` | Headless prompt |
-| `m3 completion install` | zsh completions |
-| `m3 local` | Offline GGUF models (default Qwen3-VL-4B; `--model` for others) |
 
 ## Develop
 
