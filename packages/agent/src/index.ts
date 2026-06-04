@@ -23,3 +23,4 @@ export * from "./session/message-store.js";
 export * from "./phase2-harness.js";
 export * from "./phase4-advanced.js";
 export * from "./legacy/cli-engine.js";
+export * from "./llm/router.js";
