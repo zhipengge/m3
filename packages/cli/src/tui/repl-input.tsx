@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { getSlashCommandSpecs } from "@m3/commands";
@@ -39,6 +39,20 @@ export function ReplInput(props: ReplInputProps) {
   const paletteSpecs = getSlashCommandSpecs(slashNames).filter(
     (s) => !filter || s.name.toLowerCase().startsWith(filter.toLowerCase()),
   );
+
+  // Whenever the filter changes the number of matching commands, clamp the
+  // selection so it never points past the end of the list. The SlashPalette
+  // also clamps internally for visual safety, but doing it here keeps the
+  // index consistent for Tab-complete and Enter-apply.
+  useEffect(() => {
+    if (paletteSpecs.length === 0) {
+      if (paletteIdx !== 0) onPaletteIdxChange(0);
+      return;
+    }
+    if (paletteIdx >= paletteSpecs.length) {
+      onPaletteIdxChange(paletteSpecs.length - 1);
+    }
+  }, [paletteSpecs.length, paletteIdx, onPaletteIdxChange]);
 
   const handleSubmit = useCallback(
     (line: string) => {
