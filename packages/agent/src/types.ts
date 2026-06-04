@@ -15,6 +15,7 @@ export type AgentRunOptions = {
 
 export type AgentStreamEvent =
   | { type: "assistant_delta"; delta: string }
+  | { type: "reasoning_delta"; delta: string }
   | { type: "assistant_message"; text: string }
   | { type: "tool_use"; name: string; input?: unknown }
   | { type: "tool_result"; name: string; output?: string }

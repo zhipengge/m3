@@ -29,6 +29,7 @@ import { collectSystemInfo } from "./system-info.js";
 import { EventLog } from "./event-log.js";
 import { clearGatewayPid, writeGatewayPid } from "./pid-file.js";
 import { PortInUseError, findProcessOnPort } from "./port-utils.js";
+import { withShutdownTimeout } from "./shutdown-utils.js";
 
 export type GatewayServerOptions = {
   config: M3Config;
@@ -163,13 +164,40 @@ export class GatewayServer {
 
   async stop(): Promise<void> {
     clearGatewayPid();
-    await this.channelManager?.stopAll();
-    await new Promise<void>((resolve) => {
-      this.wss?.close(() => resolve());
-    });
-    await new Promise<void>((resolve) => {
-      this.httpServer?.close(() => resolve());
-    });
+
+    await withShutdownTimeout(
+      this.channelManager?.stopAll() ?? Promise.resolve(),
+      8_000,
+      "channel shutdown",
+    );
+
+    const wss = this.wss;
+    if (wss) {
+      for (const client of wss.clients) {
+        try {
+          client.terminate();
+        } catch {
+          // ignore
+        }
+      }
+      await withShutdownTimeout(
+        new Promise<void>((resolve) => wss.close(() => resolve())),
+        3_000,
+        "websocket close",
+      );
+      this.wss = undefined;
+    }
+
+    const httpServer = this.httpServer;
+    if (httpServer) {
+      httpServer.closeAllConnections();
+      await withShutdownTimeout(
+        new Promise<void>((resolve) => httpServer.close(() => resolve())),
+        3_000,
+        "http close",
+      );
+      this.httpServer = undefined;
+    }
   }
 
   getPermissionBridge(): PermissionBridge {
@@ -274,7 +302,9 @@ export class GatewayServer {
       cwd: params.workspace,
       permissionHandler: createPermissionHandler(this.permissionBridge),
     })) {
-      if (evt.type === "assistant_delta") {
+      if (evt.type === "reasoning_delta") {
+        emit({ stream: "thinking", delta: evt.delta });
+      } else if (evt.type === "assistant_delta") {
         emit({ stream: "assistant", delta: evt.delta });
       } else if (evt.type === "tool_use") {
         emit({ stream: "tool", toolName: evt.name });

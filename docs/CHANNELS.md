@@ -218,7 +218,7 @@ m3 gateway
 
 ```
 [Attachments — use Read tool on these paths if needed]
-- [image] /Users/.../.m3/media/feishu/default/xxx.png (image/png)
+- [image] ~/.m3/media/feishu/default/xxx.png (image/png)
 ```
 
 Agent 在沙箱内可用 `Read` 读取这些路径（路径在 workspace 外时会被沙箱拒绝——联调时可将 `agent.cwd` 设为 `~` 或关闭 `sandbox.allowReadOutside` 仅用于读附件，生产请复制到 workspace）。

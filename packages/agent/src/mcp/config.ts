@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { expandHome } from "@m3/config";
 import { z } from "zod";
 
-/** Claude Desktop / Cursor compatible MCP server entry. */
+/** Claude Desktop–compatible MCP server entry. */
 export const McpServerEntrySchema = z.object({
   command: z.string().optional(),
   args: z.array(z.string()).optional(),

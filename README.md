@@ -49,7 +49,7 @@ m3 model              # show active model
 m3 model deepseek-chat   # switch model (writes ~/.m3/m3.json)
 ```
 
-In the REPL (`›` prompt): natural language or slash commands — **Ctrl+C** exits.
+In the REPL (`›` prompt): natural language or slash commands. **Ctrl+C** exits and shuts down the gateway (press again to force quit if shutdown stalls).
 
 ### Workspace & permissions
 
@@ -70,12 +70,15 @@ After you allow, **Write / Edit** and built-in file tools run under that folder 
 
 ### Terminal UI (Ink)
 
-Claude Code–style UI: streaming replies, breathing spinner, slash **command palette** (`/` + ↑↓ + Tab). Input uses **`ink-text-input`** (←→ cursor, paste, CJK/IME-friendly).
+Claude Code–style UI: streaming replies, breathing spinner, slash **command palette** (`/` + ↑↓ + Tab). Input uses **`ink-text-input`** (arrow keys, paste, CJK/IME-friendly).
+
+**Reasoning models** (e.g. `MiniMax-M3`, `deepseek-reasoner`) stream a **∴ Thinking…** block before the reply. **Ctrl+O** or `/thinking` toggles expand/collapse; default is expanded (`agent.thinkingDisplay` in `~/.m3/m3.json`).
 
 | Fallback | Command |
 |----------|---------|
 | Plain readline | `m3 chat --plain` or `M3_PLAIN_REPL=1` |
 | Skip workspace prompt (CI) | `M3_SKIP_WORKSPACE_GRANT=1` |
+| Collapsed thinking only | `"thinkingDisplay": "collapsed"` under `agent` |
 
 Shell tab completion: `m3 completion install`.
 
@@ -100,6 +103,7 @@ Built-in providers: **DeepSeek**, **Anthropic**, **MiniMax** (OpenAI-compatible)
 | `/goal <condition>` | Set a session goal; `/goal` shows it; `/goal clear` clears |
 | `/plan` | Plan-mode prompt |
 | `/model [ref]` | Show active model; switch via `m3 model <ref>` |
+| `/thinking` | Toggle reasoning display (`expand` / `collapse`; Ctrl+O in Ink REPL) |
 | `/mcp` · `/skills` · `/doctor` · … | See `/help` |
 
 **Contributors:** `pnpm install && pnpm build && pnpm test`
@@ -142,7 +146,7 @@ node scripts/verify-local.mjs   # doctor + slash cmds + local agent smoke test
 | **Harness** | In-process loop · DeepSeek · Anthropic · **MiniMax** · **local llama.cpp** · mock engine |
 | **Security** | Workspace sandbox · Bash allowlist · audit log |
 | **Ecosystem** | `SKILL.md` · MCP · `@m3/plugin-sdk` plugins |
-| **DX** | `m3 models` / `m3 model` · workspace grant · Ink REPL · zsh completion · `/dashboard` |
+| **DX** | `m3 models` / `m3 model` · workspace grant · Ink REPL · **∴ Thinking** (Ctrl+O) · zsh completion · `/dashboard` |
 
 ## Architecture
 
@@ -334,7 +338,8 @@ Templates: [`examples/m3.json`](examples/m3.json) · [`examples/secrets.json.exa
 {
   "agent": {
     "engine": "native",
-    "model": "deepseek/deepseek-chat",
+    "model": "minimax/MiniMax-M3",
+    "thinkingDisplay": "expanded",
     "channelPermissionMode": "bypassPermissions",
     "sandbox": { "enabled": true }
   }

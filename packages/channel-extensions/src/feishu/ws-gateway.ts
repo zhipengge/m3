@@ -79,6 +79,11 @@ export async function startFeishuLongConnection(params: {
 
 export async function stopFeishuLongConnection(accountId: string): Promise<void> {
   const key = `feishu:${accountId}`;
-  await active.get(key)?.stop();
+  const handle = active.get(key);
+  if (!handle) return;
+  await Promise.race([
+    handle.stop(),
+    new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+  ]);
   active.delete(key);
 }

@@ -49,6 +49,8 @@ export const AgentConfigSchema = z.object({
     })
     .optional(),
   planMode: z.boolean().default(false),
+  /** Ink REPL: expanded = show reasoning stream (default); collapsed = header until Ctrl+O. */
+  thinkingDisplay: z.enum(["collapsed", "expanded"]).default("expanded"),
   subAgents: z
     .object({
       enabled: z.boolean().default(true),

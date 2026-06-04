@@ -110,7 +110,7 @@ flowchart LR
 - **plan 模式**：聚合后过滤为只读工具。
 - **扩展**：`registerToolProvider(provider)` 注入新来源（MCP / 插件）。
 
-### Skill 格式（CC / Cursor 兼容）
+### Skill 格式（Claude Code 兼容）
 
 ```
 ---

@@ -9,6 +9,7 @@ export const theme = {
   paletteBg: "#161B22",
   spinner: ["#6BB6FF", "#79C0FF", "#A5D6FF", "#C9E6FF", "#A5D6FF", "#79C0FF"] as const,
   system: "#D2A8FF",
+  thinking: "#8B949E",
   error: "#FF7B72",
   warn: "#E3B341",
 } as const;

@@ -16,6 +16,8 @@ export type ReplInputProps = {
   pendingPermission: ReplPermissionRequest | null;
   onResolvePermission: (ok: boolean) => void;
   disabled?: boolean;
+  /** When true, arrow keys select slash commands instead of moving the cursor. */
+  paletteActive?: boolean;
 };
 
 export function ReplInput(props: ReplInputProps) {
@@ -29,6 +31,7 @@ export function ReplInput(props: ReplInputProps) {
     pendingPermission,
     onResolvePermission,
     disabled,
+    paletteActive = false,
   } = props;
 
   const showPalette = input.startsWith("/");
@@ -36,7 +39,6 @@ export function ReplInput(props: ReplInputProps) {
   const paletteSpecs = getSlashCommandSpecs(slashNames).filter(
     (s) => !filter || s.name.toLowerCase().startsWith(filter.toLowerCase()),
   );
-  const paletteActive = showPalette && paletteSpecs.length > 0 && !pendingPermission && !disabled;
 
   const handleSubmit = useCallback(
     (line: string) => {
@@ -95,28 +97,28 @@ export function ReplInput(props: ReplInputProps) {
     { isActive: Boolean(pendingPermission) },
   );
 
-  const focused = !disabled && !pendingPermission;
+  const inputFocused = !disabled && !pendingPermission && !paletteActive;
 
   return (
-    <>
+    <Box flexDirection="column" flexShrink={0} width="100%">
       {showPalette && paletteSpecs.length > 0 ? (
         <SlashPalette specs={paletteSpecs} selected={paletteIdx} filter={filter} />
       ) : null}
-      <Box gap={1}>
+      <Box flexDirection="row" width="100%" gap={1}>
         <Text color={theme.user} bold>
           ›
         </Text>
-        <Text color={disabled ? theme.muted : undefined}>
+        <Box flexGrow={1}>
           <TextInput
             value={input}
             onChange={onInputChange}
             onSubmit={handleSubmit}
-            focus={focused}
-            showCursor={focused}
+            focus={inputFocused}
+            showCursor={inputFocused}
             placeholder={disabled ? "…" : ""}
           />
-        </Text>
+        </Box>
       </Box>
-    </>
+    </Box>
   );
 }

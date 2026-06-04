@@ -13,6 +13,7 @@ export type WebChatReplSink = {
   deliver: (text: string) => void;
   onTyping?: () => void;
   onDelta?: (delta: string) => void;
+  onReasoningDelta?: (delta: string) => void;
   onSystem?: (text: string) => void;
 };
 
@@ -21,6 +22,7 @@ type WebChatClient = {
   deliver: (text: string) => void;
   onTyping?: () => void;
   onDelta?: (delta: string) => void;
+  onReasoningDelta?: (delta: string) => void;
   onSystem?: (text: string) => void;
 };
 
@@ -43,6 +45,7 @@ function normalizeHandler(
     deliver: handler.deliver,
     onTyping: handler.onTyping,
     onDelta: handler.onDelta,
+    onReasoningDelta: handler.onReasoningDelta,
     onSystem: handler.onSystem,
   };
 }
@@ -65,6 +68,10 @@ export function registerWebChatClient(
 /** Push a streaming token to the terminal REPL when registered. */
 export function pushWebChatDelta(peerId: string, delta: string): void {
   clients.get(peerId)?.onDelta?.(delta);
+}
+
+export function pushWebChatReasoningDelta(peerId: string, delta: string): void {
+  clients.get(peerId)?.onReasoningDelta?.(delta);
 }
 
 export function pushWebChatSystem(peerId: string, text: string): void {

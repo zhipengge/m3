@@ -46,11 +46,38 @@ function formatContextUsage(ctx: CommandContext): string {
 }
 
 const BUILTIN_COMMANDS: Record<string, CommandHandler> = {
+  thinking: (args) => {
+    const arg = args.trim().toLowerCase();
+    const mode =
+      !arg || arg === "toggle"
+        ? "toggle"
+        : arg === "expand" || arg === "on"
+          ? "expand"
+          : arg === "collapse" || arg === "off"
+            ? "collapse"
+            : null;
+    if (!mode) {
+      return {
+        action: "reply_only",
+        text: "Usage: /thinking [toggle|expand|collapse]. In Ink REPL use Ctrl+O.",
+      };
+    }
+    return {
+      action: "reply_only",
+      text:
+        mode === "expand"
+          ? "Thinking display: expanded (Ink REPL: Ctrl+O to collapse)"
+          : mode === "collapse"
+            ? "Thinking display: collapsed (Ink REPL: Ctrl+O to expand)"
+            : "Thinking display toggled (Ink REPL: Ctrl+O)",
+    };
+  },
   help: () => ({
     action: "reply_only",
     text: [
       "m3 slash commands (Claude Code–style):",
       "/help — this message",
+      "/thinking [toggle|expand|collapse] — show/hide reasoning (Ctrl+O in Ink REPL)",
       "/status — session + model",
       "/context — context window usage",
       "/clear — clear session (aliases: /reset, /new)",

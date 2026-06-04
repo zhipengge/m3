@@ -55,6 +55,7 @@ export type ContentBlock =
 
 export type HarnessEvent =
   | { type: "assistant_delta"; delta: string }
+  | { type: "reasoning_delta"; delta: string }
   | { type: "assistant_message"; text: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
   | { type: "tool_result"; id: string; name: string; output: string; isError?: boolean }

@@ -5,6 +5,7 @@ export type StreamAdapterOptions = {
   verboseTools?: boolean;
   chunkSize?: number;
   onAssistantDelta?: (delta: string) => void;
+  onReasoningDelta?: (delta: string) => void;
   onSystemNotice?: (text: string) => void;
 };
 
@@ -21,6 +22,9 @@ export class StreamAdapter {
       case "assistant_delta":
         this.buffer += event.delta;
         this.options.onAssistantDelta?.(event.delta);
+        break;
+      case "reasoning_delta":
+        this.options.onReasoningDelta?.(event.delta);
         break;
       case "assistant_message":
         this.buffer = event.text;

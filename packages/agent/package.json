@@ -19,6 +19,7 @@
     "@anthropic-ai/sdk": "^0.74.0",
     "@m3/config": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "agentkeepalive": "^4.6.0",
     "fast-glob": "^3.3.3",
     "openai": "^4.104.0",
     "zod": "^3.24.4"

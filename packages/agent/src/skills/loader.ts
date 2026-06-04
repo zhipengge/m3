@@ -14,7 +14,7 @@ export type LoadedSkill = {
 
 /**
  * Minimal YAML frontmatter parser — intentionally tiny (no js-yaml dep) and
- * compatible with the Claude Code / Cursor `SKILL.md` shape:
+ * compatible with the Claude Code `SKILL.md` shape:
  *
  *   ---
  *   name: my-skill
@@ -67,7 +67,7 @@ async function findSkillFiles(dir: string): Promise<string[]> {
   return out;
 }
 
-/** Scan configured directories for SKILL.md files (CC/Cursor compatible). */
+/** Scan configured directories for SKILL.md files (Claude Code compatible). */
 export async function loadSkills(dirs: string[]): Promise<LoadedSkill[]> {
   const skills: LoadedSkill[] = [];
   const seen = new Set<string>();

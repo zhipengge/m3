@@ -7,6 +7,7 @@ export type ReplPermissionRequest = {
 export type ReplUiSink = {
   onTyping: () => void;
   onDelta: (delta: string) => void;
+  onReasoningDelta: (delta: string) => void;
   onDeliver: (text: string) => void;
   onSystem: (text: string) => void;
   /** Interactive tool approval (Ink); resolves when user presses y/n. */

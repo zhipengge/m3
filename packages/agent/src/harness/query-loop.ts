@@ -12,6 +12,10 @@ import type {
 } from "./types.js";
 import { toolToAnthropicDef } from "./types.js";
 
+class StreamWake extends Error {
+  readonly tag = "stream-wake";
+}
+
 /** Core agent loop — migrated from CC query.ts queryLoop (simplified). */
 export async function* runQueryLoop(
   options: QueryLoopOptions,
@@ -77,7 +81,12 @@ export async function* runQueryLoop(
     }
     const apiMessages = prepared.apiMessages;
 
-    const turn = await llm.completeTurn(
+    const pending: HarnessEvent[] = [];
+    let streamWake: (() => void) | undefined;
+    const signalStream = () => streamWake?.();
+
+    let streamedText = false;
+    const turnPromise = llm.completeTurn(
       {
         model: options.model,
         messages: apiMessages,
@@ -88,11 +97,38 @@ export async function* runQueryLoop(
       {
         onTextDelta: (delta: string) => {
           finalText += delta;
+          streamedText = true;
+          pending.push({ type: "assistant_delta", delta });
+          signalStream();
+        },
+        onReasoningDelta: (delta: string) => {
+          pending.push({ type: "reasoning_delta", delta });
+          signalStream();
         },
       },
     );
 
-    if (turn.text) {
+    let turn: Awaited<typeof turnPromise>;
+    while (true) {
+      while (pending.length > 0) {
+        yield pending.shift()!;
+      }
+      try {
+        turn = await Promise.race([
+          turnPromise,
+          new Promise<never>((_, reject) => {
+            streamWake = () => reject(new StreamWake());
+          }),
+        ]);
+        break;
+      } catch (e) {
+        if (e instanceof StreamWake) continue;
+        throw e;
+      }
+    }
+    while (pending.length > 0) yield pending.shift()!;
+
+    if (turn.text && !streamedText) {
       yield { type: "assistant_delta", delta: turn.text };
     }
 

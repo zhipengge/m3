@@ -60,7 +60,7 @@ Thumbs.db
 *.swo
 *~
 
-# Cursor / agent local
+# Local IDE / agent session artifacts (do not commit)
 .cursor/
 agent-transcripts/
 

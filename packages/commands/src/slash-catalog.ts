@@ -7,6 +7,11 @@ export type SlashCommandSpec = {
 
 export const SLASH_COMMAND_SPECS: SlashCommandSpec[] = [
   { name: "help", summary: "List slash commands", usage: "/help" },
+  {
+    name: "thinking",
+    summary: "Toggle reasoning display (Ctrl+O in Ink REPL)",
+    usage: "/thinking [toggle|expand|collapse]",
+  },
   { name: "status", summary: "Session, model, and context usage", usage: "/status" },
   { name: "context", summary: "Context window fill ratio (auto-compress at 90%)", usage: "/context" },
   { name: "clear", summary: "Clear session transcript", usage: "/clear" },

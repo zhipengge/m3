@@ -100,9 +100,20 @@ async function getOrConnectServers(config: AgentConfig): Promise<McpConnectedSer
   }
 
   const connected: McpConnectedServer[] = [];
+  const connectTimeoutMs = 30_000;
   for (const [id, entry] of Object.entries(entries)) {
     try {
-      connected.push(await connectMcpServer(id, entry));
+      connected.push(
+        await Promise.race([
+          connectMcpServer(id, entry),
+          new Promise<never>((_, reject) => {
+            setTimeout(
+              () => reject(new Error(`MCP connect timeout after ${connectTimeoutMs}ms`)),
+              connectTimeoutMs,
+            );
+          }),
+        ]),
+      );
     } catch (err) {
       process.stderr.write(
         `[m3:mcp] failed to connect "${id}": ${err instanceof Error ? err.message : String(err)}\n`,

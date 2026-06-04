@@ -1,6 +1,8 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type { ContentBlock, HarnessMessage } from "../harness/types.js";
+import { httpAgentForUrl, LLM_HTTP_TIMEOUT_MS } from "./http-agent.js";
+import { extractOpenAiReasoningDelta, modelUsesReasoningSplit } from "./reasoning.js";
 import type { LlmProvider, LlmStreamCallbacks, LlmTurnParams, LlmTurnResult } from "./types.js";
 
 export function buildOpenAiMessages(
@@ -65,6 +67,9 @@ export class OpenAiChatProvider implements LlmProvider {
     const client = new OpenAI({
       apiKey: params.model.apiKey,
       baseURL: params.model.baseUrl,
+      timeout: LLM_HTTP_TIMEOUT_MS,
+      maxRetries: 2,
+      httpAgent: httpAgentForUrl(params.model.baseUrl),
     });
 
     const tools =
@@ -85,22 +90,42 @@ export class OpenAiChatProvider implements LlmProvider {
       tools,
       max_tokens: params.model.maxTokens,
       stream: true,
+      ...(modelUsesReasoningSplit(params.model.modelId)
+        ? {
+            extra_body: {
+              reasoning_split: true,
+              thinking: { type: "adaptive" },
+            },
+          }
+        : {}),
     });
 
     let text = "";
+    let reasoningCumulative = "";
     const toolCalls = new Map<number, { id: string; name: string; args: string }>();
 
-    const idleMs = 90_000;
+    const idleMs = 120_000;
     let lastChunkAt = Date.now();
 
     for await (const chunk of stream) {
       if (params.abortSignal?.aborted) break;
-      if (Date.now() - lastChunkAt > idleMs) break;
+      if (Date.now() - lastChunkAt > idleMs) {
+        throw new Error(
+          `LLM stream idle timeout (${idleMs / 1000}s without data). Try again or use a faster model.`,
+        );
+      }
       const choice = chunk.choices[0];
       if (!choice) continue;
       lastChunkAt = Date.now();
 
       if (choice.finish_reason === "stop") break;
+
+      const rawDelta = choice.delta as Record<string, unknown>;
+      const reasoning = extractOpenAiReasoningDelta(rawDelta, reasoningCumulative);
+      if (reasoning) {
+        reasoningCumulative = reasoning.cumulative;
+        if (reasoning.delta) callbacks?.onReasoningDelta?.(reasoning.delta);
+      }
 
       if (choice.delta.content) {
         text += choice.delta.content;

@@ -6,7 +6,7 @@ import { loadSkills, parseSkillFile } from "./loader.js";
 import { buildSkillsSystemPrompt, buildSkillTool } from "./skill-tool.js";
 
 describe("SKILL.md parsing", () => {
-  it("parses frontmatter and body (CC/Cursor shape)", () => {
+  it("parses frontmatter and body (Claude Code shape)", () => {
     const { meta, body } = parseSkillFile(
       ['---', 'name: pdf', 'description: "Work with PDFs"', '---', '', 'Do the thing.'].join("\n"),
     );

@@ -17,6 +17,8 @@ export type LlmTurnResult = {
 
 export type LlmStreamCallbacks = {
   onTextDelta?: (delta: string) => void;
+  /** Model reasoning / thinking tokens (MiniMax reasoning_split, DeepSeek reasoner, etc.). */
+  onReasoningDelta?: (delta: string) => void;
 };
 
 export interface LlmProvider {

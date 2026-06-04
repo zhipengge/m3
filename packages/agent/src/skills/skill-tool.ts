@@ -7,7 +7,7 @@ const SkillInput = z.object({
 });
 
 /**
- * Build the `Skill` tool from loaded skills, using Claude Code / Cursor-style
+ * Build the `Skill` tool from loaded skills, using Claude Code–style
  * progressive disclosure: the system prompt advertises skill names +
  * descriptions; the model invokes this tool to pull the full instructions on
  * demand. Read-only and concurrency-safe (it only returns text).

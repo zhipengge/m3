@@ -48,3 +48,13 @@ m3 model MiniMax-M3
 | `minimax/MiniMax-M2` | MiniMax-M2 |
 
 文档：<https://platform.minimax.io/docs/api-reference/text-openai-api>
+
+## 思考过程（REPL）
+
+对 `MiniMax-M3` 等推理模型，m3 会自动开启 `reasoning_split`，并在 Ink REPL 中以 **∴ Thinking** 区块流式显示推理（对齐 Claude Code）：
+
+- 默认**展开**：流式显示完整 `∴ Thinking…` 推理过程
+- 流式进行中始终展示正文；结束后可用 **Ctrl+O** 折叠
+- 正文在下方 **m3** 回复框中展示
+
+`~/.m3/m3.json` 可设 `"agent": { "thinkingDisplay": "collapsed" }` 改为仅显示标题。

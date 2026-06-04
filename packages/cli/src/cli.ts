@@ -89,6 +89,35 @@ async function startGateway(opts: {
     }
 
     const server = await createGatewayServer({ config, mockAgent: opts.mock });
+
+    let shuttingDown = false;
+    let shutdownTask: Promise<void> | null = null;
+    const shutdown = (): Promise<void> => {
+      if (shutdownTask) return shutdownTask;
+      shuttingDown = true;
+      shutdownTask = (async () => {
+        console.log("\nShutting down gateway...");
+        try {
+          await server.stop();
+        } catch (err) {
+          console.error(err instanceof Error ? err.message : String(err));
+        }
+      })();
+      return shutdownTask;
+    };
+
+    let sigintCount = 0;
+    const onSignal = () => {
+      sigintCount += 1;
+      if (sigintCount >= 2 && shuttingDown) {
+        console.log("\nForce exit.");
+        process.exit(1);
+      }
+      void shutdown().then(() => process.exit(0));
+    };
+    process.on("SIGINT", onSignal);
+    process.on("SIGTERM", onSignal);
+
     try {
       let grantedWorkspace: string | undefined;
       if (opts.interactive) {
@@ -110,23 +139,23 @@ async function startGateway(opts: {
         if (config.agent.permissionMode === "default") {
           registerTerminalPermissionPrompt(server.getPermissionBridge());
         }
-        await runGatewayRepl(server, config, {
-          plain: opts.plainRepl,
-          workspace: grantedWorkspace,
-        });
+        try {
+          await runGatewayRepl(server, config, {
+            plain: opts.plainRepl,
+            workspace: grantedWorkspace,
+          });
+        } finally {
+          await shutdown();
+          process.exit(0);
+        }
+        return;
       }
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
     }
 
-    const shutdown = async () => {
-      console.log("\nShutting down gateway...");
-      await server.stop();
-      process.exit(0);
-    };
-    process.on("SIGINT", shutdown);
-    process.on("SIGTERM", shutdown);
+    await new Promise<void>(() => {});
 }
 
 program
@@ -184,12 +213,24 @@ program
     const engine = createAgentEngine({ config: agentConfig, m3Config: config, mock: opts.mock });
     const text = prompt ?? "";
     let printed = false;
+    let thinkingActive = false;
     try {
       for await (const evt of engine.run({
         prompt: text,
         permissionMode: "bypassPermissions",
       })) {
+        if (evt.type === "reasoning_delta") {
+          if (!thinkingActive) {
+            process.stderr.write("\x1b[2m\x1b[3m∴ Thinking\x1b[0m\n");
+            thinkingActive = true;
+          }
+          process.stderr.write(`\x1b[2m${evt.delta}\x1b[0m`);
+        }
         if (evt.type === "assistant_delta") {
+          if (thinkingActive) {
+            process.stderr.write("\n\n");
+            thinkingActive = false;
+          }
           process.stdout.write(evt.delta);
           printed = true;
         }
@@ -497,11 +538,19 @@ program
       rl.prompt();
     }
 
-    process.on("SIGINT", async () => {
+    let webchatShuttingDown = false;
+    const stopWebchat = async () => {
+      if (webchatShuttingDown) {
+        process.exit(1);
+      }
+      webchatShuttingDown = true;
+      console.log("\nShutting down gateway...");
       await server.stop();
       rl?.close();
       process.exit(0);
-    });
+    };
+    process.on("SIGINT", () => void stopWebchat());
+    process.on("SIGTERM", () => void stopWebchat());
   });
 
 async function main(): Promise<void> {

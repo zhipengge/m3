@@ -4,7 +4,12 @@ import {
   compressConversationHistory,
   estimateContextUsageRatio,
 } from "@m3/agent";
-import { feishuReactToMessage, pushWebChatDelta, pushWebChatSystem } from "@m3/channel-extensions";
+import {
+  feishuReactToMessage,
+  pushWebChatDelta,
+  pushWebChatReasoningDelta,
+  pushWebChatSystem,
+} from "@m3/channel-extensions";
 import {
   createReplyDispatcher,
   finalizeInboundContext,
@@ -264,6 +269,10 @@ export class MessagePipeline {
           finalized.channelId === "webchat"
             ? (delta) => pushWebChatDelta(finalized.peerId, delta)
             : undefined,
+        onReasoningDelta:
+          finalized.channelId === "webchat"
+            ? (delta) => pushWebChatReasoningDelta(finalized.peerId, delta)
+            : undefined,
         onSystemNotice:
           finalized.channelId === "webchat"
             ? (text) => pushWebChatSystem(finalized.peerId, text)
@@ -362,6 +371,14 @@ function formatInboundError(msg: string): string {
       "Error: prompt is too long for the current model context.",
       "Try: /clear — then send a shorter message.",
       "Local model: m3 local stop && m3 local --ctx-size 32768",
+    ].join("\n");
+  }
+  if (lower.includes("socket timeout") || lower.includes("err_socket_timeout")) {
+    return [
+      "Error: API connection timed out (Socket timeout).",
+      "Check: network, API key in ~/.m3/secrets.json, m3 doctor",
+      "Try: m3 model deepseek-chat (or another provider), /clear, then retry",
+      "If using MiniMax: confirm baseUrl (CN: https://api.minimaxi.com/v1)",
     ].join("\n");
   }
   return `Error: ${msg.slice(0, 500)}`;

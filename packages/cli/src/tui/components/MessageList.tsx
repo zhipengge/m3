@@ -1,65 +1,28 @@
 import { Box, Text } from "ink";
-import { theme } from "../theme.js";
+import type { ChatLine } from "./message-types.js";
+import { MessageRow } from "./MessageRow.js";
 
-export type ChatLine = {
-  id: string;
-  role: "user" | "assistant" | "system";
-  text: string;
-  streaming?: boolean;
-};
+export type { ChatLine } from "./message-types.js";
 
-export function MessageList(props: { messages: ChatLine[]; maxLines?: number }) {
+/** @deprecated Use Static + live region in ReplApp; kept for tests. */
+export function MessageList(props: {
+  messages: ChatLine[];
+  maxLines?: number;
+  thinkingExpanded?: boolean;
+}) {
   const max = props.maxLines ?? 14;
   const slice = props.messages.slice(-max);
+  const thinkingExpanded = props.thinkingExpanded ?? false;
 
   return (
-    <Box flexDirection="column" marginBottom={1} minHeight={Math.min(slice.length, 8)}>
+    <Box flexDirection="column" marginBottom={1}>
       {slice.length === 0 ? (
         <Text dimColor>Send a message or type / for commands</Text>
       ) : (
-        slice.map((msg) => <MessageRow key={msg.id} message={msg} />)
+        slice.map((msg) => (
+          <MessageRow key={msg.id} message={msg} thinkingExpanded={thinkingExpanded} />
+        ))
       )}
-    </Box>
-  );
-}
-
-function MessageRow({ message }: { message: ChatLine }) {
-  if (message.role === "system") {
-    return (
-      <Box marginY={0}>
-        <Text color={theme.system} dimColor>
-          ◆ {message.text}
-        </Text>
-      </Box>
-    );
-  }
-
-  if (message.role === "user") {
-    return (
-      <Box flexDirection="column" marginY={0}>
-        <Text color={theme.user} bold>
-          you
-        </Text>
-        <Text wrap="wrap">{message.text}</Text>
-      </Box>
-    );
-  }
-
-  return (
-    <Box
-      flexDirection="column"
-      marginY={0}
-      borderStyle="round"
-      borderColor={theme.border}
-      paddingX={1}
-    >
-      <Text color={theme.accent} bold>
-        m3
-      </Text>
-      <Text wrap="wrap">
-        {message.text}
-        {message.streaming ? <Text color={theme.accent}>▌</Text> : null}
-      </Text>
     </Box>
   );
 }

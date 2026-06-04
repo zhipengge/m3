@@ -5,6 +5,8 @@ export function mapHarnessEvent(evt: HarnessEvent): AgentStreamEvent[] {
   switch (evt.type) {
     case "assistant_delta":
       return [{ type: "assistant_delta", delta: evt.delta }];
+    case "reasoning_delta":
+      return [{ type: "reasoning_delta", delta: evt.delta }];
     case "assistant_message":
       return [{ type: "assistant_message", text: evt.text }];
     case "tool_use":

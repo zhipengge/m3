@@ -26,6 +26,9 @@ export async function runInkRepl(options: InkReplOptions): Promise<void> {
     onDelta(delta) {
       getReplUiSink()?.onDelta(delta);
     },
+    onReasoningDelta(delta) {
+      getReplUiSink()?.onReasoningDelta(delta);
+    },
     onSystem(text) {
       getReplUiSink()?.onSystem(text);
     },
@@ -36,8 +39,14 @@ export async function runInkRepl(options: InkReplOptions): Promise<void> {
       modelLabel,
       workspace: options.workspace,
       dashboardUrl: options.dashboardUrl,
+      initialThinkingExpanded: options.config.agent.thinkingDisplay === "expanded",
       onSubmit: options.onLine,
     }),
+    {
+      stdout: process.stdout,
+      stdin: process.stdin,
+      patchConsole: false,
+    },
   );
 
   const unregister = registerWebChatClient(options.peerId, sinkWrapper);
