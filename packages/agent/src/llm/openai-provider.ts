@@ -1,14 +1,48 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type { ContentBlock, HarnessMessage } from "../harness/types.js";
+import { resolveImageSource } from "../harness/image-source.js";
 import { httpAgentForUrl, LLM_HTTP_TIMEOUT_MS } from "./http-agent.js";
 import { extractOpenAiReasoningDelta, modelUsesReasoningSplit } from "./reasoning.js";
 import type { LlmProvider, LlmStreamCallbacks, LlmTurnParams, LlmTurnResult } from "./types.js";
 
-export function buildOpenAiMessages(
+/**
+ * Translate one `ContentBlock[]` user message into the OpenAI
+ * `ChatCompletionContentPart[]` shape (text + image_url). The image source
+ * is resolved (read from disk and base64-encoded) here, immediately before
+ * the API call — not on inbound — so the on-disk path keeps the transcript
+ * small and the resolved bytes never enter session persistence.
+ */
+async function buildUserContent(
+  blocks: ContentBlock[],
+): Promise<Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>> {
+  const out: Array<
+    { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }
+  > = [];
+  for (const b of blocks) {
+    if (b.type === "text") {
+      out.push({ type: "text", text: b.text });
+      continue;
+    }
+    if (b.type === "image") {
+      const { data, mimeType } = await resolveImageSource(b.source);
+      // OpenAI accepts a data: URI in image_url.url — that's the standard
+      // path for local files. No file-path option exists.
+      out.push({
+        type: "image_url",
+        image_url: { url: `data:${mimeType};base64,${data}` },
+      });
+    }
+    // tool_use / tool_result never appear in a user turn (those are
+    // produced only by the assistant); safely ignored.
+  }
+  return out;
+}
+
+export async function buildOpenAiMessages(
   messages: HarnessMessage[],
   system?: string,
-): ChatCompletionMessageParam[] {
+): Promise<ChatCompletionMessageParam[]> {
   const out: ChatCompletionMessageParam[] = [];
   if (system) out.push({ role: "system", content: system });
 
@@ -52,8 +86,16 @@ export function buildOpenAiMessages(
       continue;
     }
 
-    const text = m.content.filter((b) => b.type === "text").map((b) => b.text).join("");
-    out.push({ role: "user", content: text });
+    // User turn: may contain image blocks — resolve them and pass a
+    // multi-part content array to the API.
+    const parts = await buildUserContent(m.content);
+    if (parts.length === 1 && parts[0]!.type === "text") {
+      // Preserve the plain string content for text-only messages so we
+      // don't change the wire shape for the common case.
+      out.push({ role: "user", content: parts[0]!.text });
+    } else {
+      out.push({ role: "user", content: parts });
+    }
   }
 
   return out;
@@ -86,7 +128,7 @@ export class OpenAiChatProvider implements LlmProvider {
 
     const stream = await client.chat.completions.create({
       model: params.model.modelId,
-      messages: buildOpenAiMessages(params.messages, params.system),
+      messages: await buildOpenAiMessages(params.messages, params.system),
       tools,
       max_tokens: params.model.maxTokens,
       stream: true,

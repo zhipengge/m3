@@ -28,6 +28,7 @@ export class QueryEngine {
     resume?: boolean;
     permissionMode?: AgentConfig["permissionMode"];
     permissionHandler?: PermissionHandler;
+    attachments?: Array<{ type: "image" | "file"; path: string; mimeType?: string }>;
   }): AsyncGenerator<HarnessEvent, { text: string; sessionId: string }> {
     const sessionId = params.sessionId ?? randomUUID();
     const cwd = params.cwd ?? resolveAgentWorkspace(this.options.agent);
@@ -56,6 +57,7 @@ export class QueryEngine {
       bashEnvAllow: this.options.agent.sandbox?.bashEnvAllow,
       extraSystem: systemPrompt || undefined,
       permissionHandler: params.permissionHandler,
+      attachments: params.attachments,
     });
 
     let result = await loop.next();

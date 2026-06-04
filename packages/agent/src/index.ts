@@ -1,4 +1,5 @@
 export * from "./types.js";
+export * from "./harness/image-source.js";
 export * from "./context-trim.js";
 export * from "./factory.js";
 export { resolveAgentModel } from "./factory.js";

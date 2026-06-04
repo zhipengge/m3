@@ -27,7 +27,30 @@ export async function* runQueryLoop(
   const tools = options.tools;
   const sessionId = options.sessionId;
   const messages: HarnessMessage[] = options.resumeMessages ? [...options.resumeMessages] : [];
-  messages.push({ role: "user", content: options.prompt });
+  // Build the first user turn — string when there are no attachments, or
+  // a `ContentBlock[]` when at least one image is attached. Non-image
+  // attachments stay in the text body as path references.
+  const hasImageAttachment = options.attachments?.some((m) => m.type === "image");
+  if (hasImageAttachment) {
+    const blocks: ContentBlock[] = [{ type: "text", text: options.prompt || "[image attached]" }];
+    for (const m of options.attachments ?? []) {
+      if (m.type === "image") {
+        blocks.push({
+          type: "image",
+          source: {
+            kind: "path",
+            path: m.path,
+            mimeType: m.mimeType ?? "image/png",
+          },
+        });
+      } else {
+        blocks.push({ type: "text", text: `[file: ${m.path}]` });
+      }
+    }
+    messages.push({ role: "user", content: blocks });
+  } else {
+    messages.push({ role: "user", content: options.prompt });
+  }
 
   yield { type: "session_id", sessionId };
   yield { type: "lifecycle", phase: "start" };

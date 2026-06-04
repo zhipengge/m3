@@ -1,6 +1,21 @@
 import type { AgentConfig } from "@m3/config";
 import type { PermissionHandler } from "./permissions/manager.js";
 
+/**
+ * Inbound media attached to a user turn. Image media is inlined as a vision
+ * block in the user message; non-image media keeps the legacy path-as-text
+ * behaviour (the LLM is told the path and expected to Read it).
+ *
+ * Path is on disk in `~/.m3/media/<channel>/<account>/…` — providers
+ * base64-encode it at send time, not at inbound time, so the transcript
+ * stays small.
+ */
+export type InboundMedia = {
+  type: "image" | "file";
+  path: string;
+  mimeType?: string;
+};
+
 export type AgentRunOptions = {
   prompt: string;
   sessionId?: string;
@@ -11,6 +26,12 @@ export type AgentRunOptions = {
   resume?: boolean;
   abortSignal?: AbortSignal;
   permissionHandler?: PermissionHandler;
+  /**
+   * Optional attachments (e.g. terminal-pasted clipboard images, channel
+   * downloads). When present and the user message is text-only, the bridge
+   * layer promotes image media into a `ContentBlock[]` user message.
+   */
+  attachments?: InboundMedia[];
 };
 
 export type AgentStreamEvent =

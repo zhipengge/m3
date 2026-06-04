@@ -48,8 +48,20 @@ export type HarnessMessage =
   | { role: "user"; content: string | ContentBlock[] }
   | { role: "assistant"; content: string | ContentBlock[] };
 
+/**
+ * Where the image bytes live. Path mode is preferred for terminal paste and
+ * channel media: bytes are persisted to ~/.m3/media/<channel>/<account>/ and
+ * only the path is shipped in the user message — providers base64-encode at
+ * send time. Base64 mode is reserved for future use (e.g. ephemeral paste,
+ * network-only paths).
+ */
+export type ImageSource =
+  | { kind: "path"; path: string; mimeType: string }
+  | { kind: "base64"; data: string; mimeType: string };
+
 export type ContentBlock =
   | { type: "text"; text: string }
+  | { type: "image"; source: ImageSource }
   | { type: "tool_use"; id: string; name: string; input: unknown }
   | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
 
@@ -83,6 +95,12 @@ export type QueryLoopOptions = {
   extraSystem?: string;
   /** Optional approval hook (e.g. gateway PermissionBridge). */
   permissionHandler?: PermissionHandler;
+  /**
+   * Optional image attachments for the FIRST user turn. When present and
+   * the prompt is non-empty, the first message is upgraded from a string
+   * to `ContentBlock[]` with one text + one image block per attachment.
+   */
+  attachments?: Array<{ type: "image" | "file"; path: string; mimeType?: string }>;
 };
 
 export type QueryLoopResult = {
