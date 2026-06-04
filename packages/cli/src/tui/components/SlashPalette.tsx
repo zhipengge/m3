@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Box, Text } from "ink";
 import type { SlashCommandSpec } from "@m3/commands";
 import { paletteViewport } from "../palette-viewport.js";
@@ -10,11 +11,13 @@ import { theme } from "../theme.js";
  */
 const PALETTE_MAX_VISIBLE = 8;
 
-export function SlashPalette(props: {
+type Props = {
   specs: SlashCommandSpec[];
   selected: number;
   filter: string;
-}) {
+};
+
+function SlashPaletteImpl(props: Props) {
   const { specs, selected, filter } = props;
   if (specs.length === 0) {
     return (
@@ -75,3 +78,20 @@ export function SlashPalette(props: {
     </Box>
   );
 }
+
+/**
+ * Memoized so the palette doesn't re-render when the parent re-renders for
+ * unrelated reasons (e.g. a streaming delta or a spinner tick). The custom
+ * comparator ensures we only re-render when the visible set, the selection,
+ * or the filter string actually changed.
+ */
+export const SlashPalette = memo(SlashPaletteImpl, (prev, next) => {
+  if (prev.filter !== next.filter) return false;
+  if (prev.selected !== next.selected) return false;
+  if (prev.specs === next.specs) return true;
+  if (prev.specs.length !== next.specs.length) return false;
+  for (let i = 0; i < prev.specs.length; i++) {
+    if (prev.specs[i] !== next.specs[i]) return false;
+  }
+  return true;
+});

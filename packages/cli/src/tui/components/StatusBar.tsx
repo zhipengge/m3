@@ -1,12 +1,15 @@
+import { memo } from "react";
 import { Box, Text } from "ink";
 import { theme } from "../theme.js";
 
-export function StatusBar(props: {
+type Props = {
   model?: string;
   contextPct?: number;
   goal?: string;
   dashboardUrl?: string;
-}) {
+};
+
+function StatusBarImpl(props: Props) {
   const parts: string[] = [];
   if (props.model) parts.push(props.model);
   if (props.contextPct !== undefined) {
@@ -22,3 +25,5 @@ export function StatusBar(props: {
     </Box>
   );
 }
+
+export const StatusBar = memo(StatusBarImpl);

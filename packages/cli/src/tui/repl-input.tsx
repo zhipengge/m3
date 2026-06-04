@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { memo, useCallback, useEffect, useMemo } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { getSlashCommandSpecs } from "@m3/commands";
@@ -24,7 +24,7 @@ export type ReplInputProps = {
   paletteActive?: boolean;
 };
 
-export function ReplInput(props: ReplInputProps) {
+function ReplInputImpl(props: ReplInputProps) {
   const {
     input,
     onInputChange,
@@ -40,8 +40,15 @@ export function ReplInput(props: ReplInputProps) {
 
   const showPalette = input.startsWith("/");
   const filter = input.startsWith("/") ? (input.slice(1).split(/\s/)[0] ?? "") : "";
-  const paletteSpecs = getSlashCommandSpecs(slashNames).filter(
-    (s) => !filter || s.name.toLowerCase().startsWith(filter.toLowerCase()),
+  // Memoize the spec list so a re-render of ReplApp (e.g. spinner tick) does
+  // not push a brand-new array reference down to <SlashPalette>, defeating
+  // its own React.memo guard.
+  const paletteSpecs = useMemo(
+    () =>
+      getSlashCommandSpecs(slashNames).filter(
+        (s) => !filter || s.name.toLowerCase().startsWith(filter.toLowerCase()),
+      ),
+    [slashNames, filter],
   );
 
   // Whenever the filter changes the number of matching commands, clamp the
@@ -151,3 +158,11 @@ export function ReplInput(props: ReplInputProps) {
     </Box>
   );
 }
+
+/**
+ * Memoized. Re-renders only when one of its own props changes — the parent
+ * (ReplApp) re-renders on every streaming delta and spinner tick, and
+ * without this guard the TextInput would re-mount, the SlashPalette would
+ * re-render, and `useInput` handlers would be re-registered on every tick.
+ */
+export const ReplInput = memo(ReplInputImpl);

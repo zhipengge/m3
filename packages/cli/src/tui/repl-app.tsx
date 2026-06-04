@@ -64,7 +64,22 @@ export function ReplApp(props: ReplAppProps) {
   const paletteActive = isSlashPaletteActive(input, slashNames, inputDisabled);
 
   const pushCompleted = useCallback((line: ChatLine) => {
-    setCompleted((prev) => [...prev.filter((m) => m.id !== line.id), line].slice(-MAX_COMPLETED));
+    setCompleted((prev) => {
+      // O(1) when the buffer has room; O(1) shift + O(N) dedup check when
+      // the buffer is at MAX_COMPLETED. Previous implementation did an
+      // unconditional O(N) filter + O(N) slice on every push.
+      let base: ChatLine[];
+      if (prev.length >= MAX_COMPLETED) {
+        base = prev.slice(prev.length - MAX_COMPLETED + 1);
+      } else {
+        base = prev;
+      }
+      // Defensive dedup: ids come from a monotonic counter, so this should
+      // never match, but the cost is a single O(N) scan over ≤80 items.
+      if (base.some((m) => m.id === line.id)) return prev;
+      base = [...base, line];
+      return base;
+    });
   }, []);
 
   const finalizeLiveThinking = useCallback(() => {
@@ -242,33 +257,38 @@ export function ReplApp(props: ReplAppProps) {
   const hasActiveThinking = liveThinking?.streaming ?? false;
   const showSpinner = loading && !pendingPermission && !hasActiveThinking;
 
+  // Stable render function for <Static>. Ink caches items by their
+  // (function ref, item ref, index) tuple, so giving it a fresh inline
+  // arrow on every parent render would invalidate that cache and force
+  // every completed message to re-mount. Lifting this to a useCallback
+  // keeps the function ref stable for the lifetime of the component.
+  const renderCompleted = useCallback(
+    (msg: ChatLine) =>
+      msg.id === BANNER_ID ? (
+        <Box key={msg.id} flexDirection="column" marginBottom={1}>
+          <Text bold color={theme.brand}>
+            m3
+          </Text>
+          <Text dimColor>Multi-modality · Multi-task · Multi-agent</Text>
+          <Text dimColor>
+            Type / for commands · Ctrl+O expand thinking · Enter send · Ctrl+C exit
+          </Text>
+          {props.workspace ? <Text dimColor>Workspace: {props.workspace}</Text> : null}
+        </Box>
+      ) : (
+        <Box key={msg.id} marginBottom={0}>
+          <MessageRow
+            message={msg}
+            thinkingExpanded={msg.role === "thinking"}
+          />
+        </Box>
+      ),
+    [props.workspace],
+  );
+
   return (
     <Box flexDirection="column" width="100%">
-      <Static items={completed}>
-        {(msg) =>
-          msg.id === BANNER_ID ? (
-            <Box key={msg.id} flexDirection="column" marginBottom={1}>
-              <Text bold color={theme.brand}>
-                m3
-              </Text>
-              <Text dimColor>Multi-modality · Multi-task · Multi-agent</Text>
-              <Text dimColor>
-                Type / for commands · Ctrl+O expand thinking · Enter send · Ctrl+C exit
-              </Text>
-              {props.workspace ? (
-                <Text dimColor>Workspace: {props.workspace}</Text>
-              ) : null}
-            </Box>
-          ) : (
-            <Box key={msg.id} marginBottom={0}>
-              <MessageRow
-                message={msg}
-                thinkingExpanded={msg.role === "thinking"}
-              />
-            </Box>
-          )
-        }
-      </Static>
+      <Static items={completed}>{renderCompleted}</Static>
 
       <Box flexDirection="column" flexShrink={0} width="100%">
         {liveThinking ? (
