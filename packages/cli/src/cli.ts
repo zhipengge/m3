@@ -598,13 +598,13 @@ program
       prompt: "you> ",
       repromptAfterSubmit: false,
       showMenuOnStart: Boolean(opts.plain),
-      onLine: async (line) => {
+      onLine: async (line, media) => {
         const runtime = {
           config,
           log: () => {},
           onInbound: (msg: import("@m3/channels").InboundMessage) => server.dispatchInbound(msg),
         };
-        await simulateWebChatInbound(runtime, peer, line.trim());
+        await simulateWebChatInbound(runtime, peer, line.trim(), media);
       },
     });
 

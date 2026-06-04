@@ -10,7 +10,7 @@ export type InkReplOptions = {
   config: M3Config;
   workspace?: string;
   dashboardUrl?: string;
-  onLine: (line: string) => void | Promise<void>;
+  onLine: (line: string, media?: import("../interactive-repl.js").ReplMedia) => void | Promise<void>;
 };
 
 export async function runInkRepl(options: InkReplOptions): Promise<void> {

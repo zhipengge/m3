@@ -1,9 +1,18 @@
 import readline from "node:readline";
 import { completeSlashLine, formatSlashCommandMenu, listCommands } from "@m3/commands";
 
+/**
+ * Media attached to a single user turn. Image media is forwarded to the
+ * engine as vision input; non-image media is appended to the prompt as
+ * a path string for the LLM to Read. The Ink REPL populates this when
+ * the user pastes a clipboard image (Ctrl+V); the readline path leaves
+ * it undefined (paste is an Ink-only feature).
+ */
+export type ReplMedia = Array<{ type: "image" | "file"; path: string; mimeType?: string }>;
+
 export type InteractiveReplOptions = {
   prompt?: string;
-  onLine: (line: string) => void | Promise<void>;
+  onLine: (line: string, media?: ReplMedia) => void | Promise<void>;
   extraSlashCommands?: string[];
   showMenuOnStart?: boolean;
   repromptAfterSubmit?: boolean;

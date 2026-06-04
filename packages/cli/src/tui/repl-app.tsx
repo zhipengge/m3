@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useInput } from "ink";
 import { listCommands } from "@m3/commands";
+import { saveChannelMedia } from "@m3/channel-extensions";
+import type { InboundMessage } from "@m3/channels";
 import { BreathingSpinner } from "./components/BreathingSpinner.js";
 import type { ChatLine } from "./components/message-types.js";
 import { MessageRow } from "./components/MessageRow.js";
@@ -17,13 +19,16 @@ import {
 } from "./repl-thinking.js";
 import { createStreamBuffer } from "./repl-stream-buffer.js";
 import { theme } from "./theme.js";
+import { readClipboardImage } from "../clipboard-image.js";
+
+type ReplMedia = NonNullable<InboundMessage["media"]>;
 
 export type ReplAppProps = {
   modelLabel: string;
   workspace?: string;
   dashboardUrl?: string;
   initialThinkingExpanded?: boolean;
-  onSubmit: (line: string) => void | Promise<void>;
+  onSubmit: (line: string, media?: ReplMedia) => void | Promise<void>;
 };
 
 const MAX_COMPLETED = 80;
@@ -52,6 +57,7 @@ export function ReplApp(props: ReplAppProps) {
     null,
   );
   const [paletteIdx, setPaletteIdx] = useState(0);
+  const [pendingAttachments, setPendingAttachments] = useState<ReplMedia>([]);
   const [thinkingExpanded, setThinkingExpandedState] = useState(
     () => props.initialThinkingExpanded ?? false,
   );
@@ -218,12 +224,38 @@ export function ReplApp(props: ReplAppProps) {
       setLiveThinking(null);
       setLiveAssistant(null);
       streamBufferRef.current.flushNow();
-      void onSubmitRef.current(normalized);
+      // Snapshot the attachments so a Ctrl+V race during the await doesn't
+      // mutate the array after we've already submitted it.
+      const media = pendingAttachments.length > 0 ? pendingAttachments : undefined;
+      void Promise.resolve(onSubmitRef.current(normalized, media)).catch(() => {});
       setInput("");
       setPaletteIdx(0);
+      setPendingAttachments([]);
     },
-    [appendUserMessage, handleThinkingSlash],
+    [appendUserMessage, handleThinkingSlash, pendingAttachments],
   );
+
+  /**
+   * Ctrl+V: read the OS clipboard image, persist to ~/.m3/media/webchat/…,
+   * and queue it as a pending attachment. Surfaced as a chip above the
+   * input. Empty clipboard or non-image content is a no-op (no error).
+   * Currently macOS-only — the helper returns null on Linux/Windows and
+   * the keypress silently does nothing.
+   */
+  const handlePasteImage = useCallback(async () => {
+    if (pendingPermission) return;
+    const img = await readClipboardImage();
+    if (!img) return;
+    const saved = await saveChannelMedia({
+      channelId: "webchat",
+      accountId: "default",
+      resourceId: `clip-${Date.now()}`,
+      data: img.data,
+      mimeType: img.mimeType,
+      kind: "image",
+    });
+    setPendingAttachments((prev) => [...prev, { type: "image", path: saved.path, mimeType: saved.mimeType }]);
+  }, [pendingPermission]);
 
   const handleInputChange = useCallback((value: string) => {
     setInput(value);
@@ -241,6 +273,10 @@ export function ReplApp(props: ReplAppProps) {
     (_char, key) => {
       if (key.ctrl && _char === "o") {
         toggleThinkingExpanded();
+        return;
+      }
+      if (key.ctrl && (_char === "v" || _char === "V")) {
+        void handlePasteImage();
         return;
       }
       if (key.ctrl && (_char === "c" || _char === "d")) {
@@ -324,6 +360,25 @@ export function ReplApp(props: ReplAppProps) {
         ) : null}
 
         {showSpinner ? <BreathingSpinner /> : null}
+
+        {pendingAttachments.length > 0 ? (
+          <Box
+            borderStyle="round"
+            borderColor={theme.accent}
+            paddingX={1}
+            marginBottom={0}
+            flexDirection="row"
+            gap={1}
+          >
+            <Text color={theme.accent}>📎</Text>
+            <Text dimColor>
+              {pendingAttachments.length} image{pendingAttachments.length === 1 ? "" : "s"} attached
+            </Text>
+            <Text dimColor>
+              ({pendingAttachments.map((a) => a.path.split("/").pop()).join(", ")})
+            </Text>
+          </Box>
+        ) : null}
 
         <ReplInput
           input={input}

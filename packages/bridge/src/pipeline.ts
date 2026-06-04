@@ -250,6 +250,11 @@ export class MessagePipeline {
       if (cmdResult) {
         prompt = applyCommandResult(cmdResult, prompt);
       }
+      // `attachments` only carry image media that the engine should send
+      // as vision input. Non-image media already lives in `prompt` (as
+      // path strings the LLM can Read), so we filter to image-only here
+      // and let `inboundToPrompt` keep its existing behaviour for files.
+      const imageAttachments = (finalized.media ?? []).filter((m) => m.type === "image");
 
       this.options.sessionMapper.upsert({
         sessionKey: route.sessionKey,
@@ -297,6 +302,7 @@ export class MessagePipeline {
         cwd,
         resume: Boolean(sessionId),
         permissionMode: channelAgent.permissionMode,
+        ...(imageAttachments.length > 0 ? { attachments: imageAttachments } : {}),
         permissionHandler,
       })) {
         await stream.handleEvent(evt);

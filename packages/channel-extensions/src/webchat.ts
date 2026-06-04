@@ -82,6 +82,7 @@ export function simulateWebChatInbound(
   runtime: ChannelRuntimeContext,
   peerId: string,
   body: string,
+  media?: InboundMessage["media"],
 ): Promise<void> {
   const message: InboundMessage = {
     channelId: "webchat",
@@ -89,6 +90,7 @@ export function simulateWebChatInbound(
     peerId,
     peerKind: "dm",
     body,
+    media,
   };
   return runtime.onInbound(message);
 }
