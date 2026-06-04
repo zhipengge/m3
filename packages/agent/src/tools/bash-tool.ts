@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { z } from "zod";
 import type { ToolDefinition } from "../harness/types.js";
 import { buildSandboxedEnv } from "../security/workspace.js";
+import { checkBashSafety } from "./bash-safety.js";
 
 const BashInput = z.object({
   command: z.string(),
@@ -10,6 +11,15 @@ const BashInput = z.object({
 });
 
 const DEFAULT_TIMEOUT = 120_000;
+
+/**
+ * When true (default), the Bash tool refuses to execute commands that match
+ * the dangerous-pattern list in `bash-safety.ts`. Disable in config to opt
+ * out (e.g. for trusted developer workflows).
+ */
+function bashSafetyEnabled(): boolean {
+  return process.env.M3_BASH_SAFETY !== "0";
+}
 
 export const bashTool: ToolDefinition = {
   name: "Bash",
@@ -27,6 +37,17 @@ export const bashTool: ToolDefinition = {
   execute: async (raw, ctx) => {
     const input = BashInput.parse(raw);
     const timeout = input.timeout ?? DEFAULT_TIMEOUT;
+
+    if (bashSafetyEnabled()) {
+      const verdict = checkBashSafety(input.command);
+      if (!verdict.safe) {
+        return {
+          content: `Refused: ${verdict.reason} (pattern: ${verdict.pattern}). ` +
+            `If this is intentional, set M3_BASH_SAFETY=0 for this run.`,
+          isError: true,
+        };
+      }
+    }
 
     const env = ctx.sandbox.enabled
       ? buildSandboxedEnv(process.env, ctx.bashEnvAllow)
