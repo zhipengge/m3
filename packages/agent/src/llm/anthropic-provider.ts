@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages/messages.mjs";
 import type { ContentBlock, HarnessMessage } from "../harness/types.js";
 import { resolveImageSource } from "../harness/image-source.js";
+import { createIdleWatchdog, readIdleTimeoutMs } from "./idle-watchdog.js";
 import type { LlmProvider, LlmStreamCallbacks, LlmTurnParams, LlmTurnResult } from "./types.js";
 
 /** MIME types Anthropic accepts in the `image.source.media_type` field. */
@@ -103,31 +104,14 @@ export class AnthropicLlmProvider implements LlmProvider {
     }
 
     // Idle watchdog. The Anthropic SDK doesn't surface stream-level stalls
-    // well, so we keep our own counter — if no event fires for
-    // M3_LLM_IDLE_TIMEOUT_MS, abort the stream. Default 10 minutes
-    // (matches the OpenAI provider).
-    const idleMs = (() => {
-      const raw = process.env.M3_LLM_IDLE_TIMEOUT_MS;
-      if (raw && /^\d+$/.test(raw)) {
-        const n = Number(raw);
-        if (n >= 0) return n;
-      }
-      return 10 * 60 * 1000;
-    })();
-    let lastEventAt = Date.now();
-    let watchdog: ReturnType<typeof setInterval> | null = null;
+    // well, so we hook the same bump-on-event pattern as before but use
+    // the shared helper from idle-watchdog.ts.
+    const idleMs = readIdleTimeoutMs();
+    const idleWatchdog = createIdleWatchdog(idleMs, () => stream.abort());
     if (idleMs > 0) {
-      const bump = () => {
-        lastEventAt = Date.now();
-      };
-      stream.on("text", bump);
-      stream.on("contentBlock", bump);
-      stream.on("message", bump);
-      watchdog = setInterval(() => {
-        if (Date.now() - lastEventAt > idleMs) {
-          stream.abort();
-        }
-      }, Math.max(1000, Math.floor(idleMs / 10)));
+      stream.on("text", () => idleWatchdog.bump());
+      stream.on("contentBlock", () => idleWatchdog.bump());
+      stream.on("message", () => idleWatchdog.bump());
     }
 
     try {
@@ -186,7 +170,7 @@ export class AnthropicLlmProvider implements LlmProvider {
       }
       throw err;
     } finally {
-      if (watchdog) clearInterval(watchdog);
+      idleWatchdog.stop();
     }
   }
 }

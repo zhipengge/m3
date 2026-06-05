@@ -3,6 +3,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { ContentBlock, HarnessMessage } from "../harness/types.js";
 import { resolveImageSource } from "../harness/image-source.js";
 import { httpAgentForUrl, LLM_HTTP_TIMEOUT_MS } from "./http-agent.js";
+import { createIdleWatchdog, readIdleTimeoutMs } from "./idle-watchdog.js";
 import { extractOpenAiReasoningDelta, modelUsesReasoningSplit } from "./reasoning.js";
 import type { LlmProvider, LlmStreamCallbacks, LlmTurnParams, LlmTurnResult } from "./types.js";
 
@@ -154,41 +155,20 @@ export class OpenAiChatProvider implements LlmProvider {
     const toolCalls = new Map<number, { id: string; name: string; args: string }>();
     let usage: { input: number; output: number; total?: number } | undefined;
 
-    // Idle timeout: how long we'll wait without ANY chunk before declaring
-    // the stream dead. Previously 120s, which routinely killed slow
-    // reasoning models (DeepSeek Reasoner, MiniMax reasoning_split, Claude
-    // extended thinking) — those can pause for several minutes between
-    // chunks while thinking. Default is now 10 minutes (matches the LLM
-    // socket timeout in http-agent.ts). Override per-run with
-    // M3_LLM_IDLE_TIMEOUT_MS=<ms>. Set to 0 to disable entirely.
-    const idleMs = (() => {
-      const raw = process.env.M3_LLM_IDLE_TIMEOUT_MS;
-      if (raw && /^\d+$/.test(raw)) {
-        const n = Number(raw);
-        if (n >= 0) return n;
-      }
-      return 10 * 60 * 1000;
-    })();
-    let lastChunkAt = Date.now();
-
-    // Run a watchdog in parallel. The post-hoc check inside the for-await
-    // only fires when a NEW chunk arrives — if the underlying socket dies
-    // silently, the await can hang forever. The watchdog wakes us up.
+    // Idle timeout watchdog. Shared with anthropic-provider via
+    // idle-watchdog.ts. Previously each provider had its own copy of
+    // the same setInterval block, which was a maintenance trap.
+    const idleMs = readIdleTimeoutMs();
     let idleTimedOut = false;
-    let watchdog: ReturnType<typeof setInterval> | null = null;
-    if (idleMs > 0) {
-      watchdog = setInterval(() => {
-        if (Date.now() - lastChunkAt > idleMs) {
-          idleTimedOut = true;
-          // Force the stream to error so the for-await throws
-          try {
-            (stream as unknown as { controller?: { abort?: () => void } }).controller?.abort?.();
-          } catch {
-            /* ignore */
-          }
-        }
-      }, Math.max(1000, Math.floor(idleMs / 10)));
-    }
+    const idleWatchdog = createIdleWatchdog(idleMs, () => {
+      idleTimedOut = true;
+      // Force the stream to error so the for-await throws
+      try {
+        (stream as unknown as { controller?: { abort?: () => void } }).controller?.abort?.();
+      } catch {
+        /* ignore */
+      }
+    });
 
     try {
       for await (const chunk of stream) {
@@ -199,6 +179,7 @@ export class OpenAiChatProvider implements LlmProvider {
               `Set M3_LLM_IDLE_TIMEOUT_MS=0 to disable, or use a faster model.`,
           );
         }
+        idleWatchdog.bump();
         // Usage may arrive on the final chunk (a chunk with no choice, or
         // a choice with finish_reason === "stop") when stream_options
         // include_usage is set. Capture it from every chunk so we never
@@ -211,7 +192,6 @@ export class OpenAiChatProvider implements LlmProvider {
             ...(total !== undefined ? { total } : {}),
           };
         }
-        lastChunkAt = Date.now();
         const choice = chunk.choices[0];
         if (!choice) continue;
 
@@ -243,7 +223,7 @@ export class OpenAiChatProvider implements LlmProvider {
         }
       }
     } finally {
-      if (watchdog) clearInterval(watchdog);
+      idleWatchdog.stop();
     }
 
     const assistantContent: ContentBlock[] = [];

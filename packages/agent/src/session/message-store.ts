@@ -22,7 +22,14 @@ export class SessionMessageStore {
     try {
       const record = JSON.parse(fs.readFileSync(fp, "utf8")) as SessionRecord;
       return record.messages ?? [];
-    } catch {
+    } catch (err) {
+      // Don't silently lose the entire transcript. Surface the corruption
+      // so the user can recover (e.g. via /compact re-summarization)
+      // rather than discovering a blank history the next morning.
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `[m3:transcript] failed to parse ${fp}: ${msg}; starting empty\n`,
+      );
       return [];
     }
   }
@@ -40,6 +47,21 @@ export class SessionMessageStore {
       messages,
       updatedAt: new Date().toISOString(),
     };
-    fs.writeFileSync(fp, JSON.stringify(record, null, 2));
+    // Atomic write: dump to a unique tmp file then rename. A power loss
+    // or crash mid-write will leave the tmp around but the canonical
+    // file untouched, so load() can still read the previous good copy.
+    const tmp = `${fp}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      fs.writeFileSync(tmp, JSON.stringify(record, null, 2));
+      fs.renameSync(tmp, fp);
+    } catch (err) {
+      // Best-effort cleanup so we don't leave stray .tmp files behind.
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        /* tmp was never created */
+      }
+      throw err;
+    }
   }
 }
