@@ -146,44 +146,82 @@ export class OpenAiChatProvider implements LlmProvider {
     let reasoningCumulative = "";
     const toolCalls = new Map<number, { id: string; name: string; args: string }>();
 
-    const idleMs = 120_000;
+    // Idle timeout: how long we'll wait without ANY chunk before declaring
+    // the stream dead. Previously 120s, which routinely killed slow
+    // reasoning models (DeepSeek Reasoner, MiniMax reasoning_split, Claude
+    // extended thinking) — those can pause for several minutes between
+    // chunks while thinking. Default is now 10 minutes (matches the LLM
+    // socket timeout in http-agent.ts). Override per-run with
+    // M3_LLM_IDLE_TIMEOUT_MS=<ms>. Set to 0 to disable entirely.
+    const idleMs = (() => {
+      const raw = process.env.M3_LLM_IDLE_TIMEOUT_MS;
+      if (raw && /^\d+$/.test(raw)) {
+        const n = Number(raw);
+        if (n >= 0) return n;
+      }
+      return 10 * 60 * 1000;
+    })();
     let lastChunkAt = Date.now();
 
-    for await (const chunk of stream) {
-      if (params.abortSignal?.aborted) break;
-      if (Date.now() - lastChunkAt > idleMs) {
-        throw new Error(
-          `LLM stream idle timeout (${idleMs / 1000}s without data). Try again or use a faster model.`,
-        );
-      }
-      const choice = chunk.choices[0];
-      if (!choice) continue;
-      lastChunkAt = Date.now();
-
-      if (choice.finish_reason === "stop") break;
-
-      const rawDelta = choice.delta as Record<string, unknown>;
-      const reasoning = extractOpenAiReasoningDelta(rawDelta, reasoningCumulative);
-      if (reasoning) {
-        reasoningCumulative = reasoning.cumulative;
-        if (reasoning.delta) callbacks?.onReasoningDelta?.(reasoning.delta);
-      }
-
-      if (choice.delta.content) {
-        text += choice.delta.content;
-        callbacks?.onTextDelta?.(choice.delta.content);
-      }
-
-      for (const tc of choice.delta.tool_calls ?? []) {
-        const idx = tc.index ?? 0;
-        if (!toolCalls.has(idx)) {
-          toolCalls.set(idx, { id: tc.id ?? `call_${idx}`, name: "", args: "" });
+    // Run a watchdog in parallel. The post-hoc check inside the for-await
+    // only fires when a NEW chunk arrives — if the underlying socket dies
+    // silently, the await can hang forever. The watchdog wakes us up.
+    let idleTimedOut = false;
+    let watchdog: ReturnType<typeof setInterval> | null = null;
+    if (idleMs > 0) {
+      watchdog = setInterval(() => {
+        if (Date.now() - lastChunkAt > idleMs) {
+          idleTimedOut = true;
+          // Force the stream to error so the for-await throws
+          try {
+            (stream as unknown as { controller?: { abort?: () => void } }).controller?.abort?.();
+          } catch {
+            /* ignore */
+          }
         }
-        const entry = toolCalls.get(idx)!;
-        if (tc.id) entry.id = tc.id;
-        if (tc.function?.name) entry.name = tc.function.name;
-        if (tc.function?.arguments) entry.args += tc.function.arguments;
+      }, Math.max(1000, Math.floor(idleMs / 10)));
+    }
+
+    try {
+      for await (const chunk of stream) {
+        if (params.abortSignal?.aborted) break;
+        if (idleTimedOut) {
+          throw new Error(
+            `LLM stream idle timeout (${Math.round(idleMs / 1000)}s without data). ` +
+              `Set M3_LLM_IDLE_TIMEOUT_MS=0 to disable, or use a faster model.`,
+          );
+        }
+        const choice = chunk.choices[0];
+        if (!choice) continue;
+        lastChunkAt = Date.now();
+
+        if (choice.finish_reason === "stop") break;
+
+        const rawDelta = choice.delta as Record<string, unknown>;
+        const reasoning = extractOpenAiReasoningDelta(rawDelta, reasoningCumulative);
+        if (reasoning) {
+          reasoningCumulative = reasoning.cumulative;
+          if (reasoning.delta) callbacks?.onReasoningDelta?.(reasoning.delta);
+        }
+
+        if (choice.delta.content) {
+          text += choice.delta.content;
+          callbacks?.onTextDelta?.(choice.delta.content);
+        }
+
+        for (const tc of choice.delta.tool_calls ?? []) {
+          const idx = tc.index ?? 0;
+          if (!toolCalls.has(idx)) {
+            toolCalls.set(idx, { id: tc.id ?? `call_${idx}`, name: "", args: "" });
+          }
+          const entry = toolCalls.get(idx)!;
+          if (tc.id) entry.id = tc.id;
+          if (tc.function?.name) entry.name = tc.function.name;
+          if (tc.function?.arguments) entry.args += tc.function.arguments;
+        }
       }
+    } finally {
+      if (watchdog) clearInterval(watchdog);
     }
 
     const assistantContent: ContentBlock[] = [];

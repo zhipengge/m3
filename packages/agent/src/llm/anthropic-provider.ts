@@ -102,29 +102,72 @@ export class AnthropicLlmProvider implements LlmProvider {
       params.abortSignal.addEventListener("abort", () => stream.abort(), { once: true });
     }
 
-    stream.on("text", (delta) => {
-      text += delta;
-      callbacks?.onTextDelta?.(delta);
-    });
-
-    stream.on("contentBlock", (block) => {
-      if (block.type === "tool_use") {
-        assistantContent.push({
-          type: "tool_use",
-          id: block.id,
-          name: block.name,
-          input: block.input,
-        });
+    // Idle watchdog. The Anthropic SDK doesn't surface stream-level stalls
+    // well, so we keep our own counter — if no event fires for
+    // M3_LLM_IDLE_TIMEOUT_MS, abort the stream. Default 10 minutes
+    // (matches the OpenAI provider).
+    const idleMs = (() => {
+      const raw = process.env.M3_LLM_IDLE_TIMEOUT_MS;
+      if (raw && /^\d+$/.test(raw)) {
+        const n = Number(raw);
+        if (n >= 0) return n;
       }
-    });
+      return 10 * 60 * 1000;
+    })();
+    let lastEventAt = Date.now();
+    let watchdog: ReturnType<typeof setInterval> | null = null;
+    if (idleMs > 0) {
+      const bump = () => {
+        lastEventAt = Date.now();
+      };
+      stream.on("text", bump);
+      stream.on("contentBlock", bump);
+      stream.on("message", bump);
+      watchdog = setInterval(() => {
+        if (Date.now() - lastEventAt > idleMs) {
+          stream.abort();
+        }
+      }, Math.max(1000, Math.floor(idleMs / 10)));
+    }
 
-    const final = await stream.finalMessage();
-    if (text) assistantContent.unshift({ type: "text", text });
+    try {
+      stream.on("text", (delta) => {
+        text += delta;
+        callbacks?.onTextDelta?.(delta);
+      });
 
-    return {
-      assistantContent,
-      text,
-      stopReason: mapStopReason(final.stop_reason),
-    };
+      stream.on("contentBlock", (block) => {
+        if (block.type === "tool_use") {
+          assistantContent.push({
+            type: "tool_use",
+            id: block.id,
+            name: block.name,
+            input: block.input,
+          });
+        }
+      });
+
+      const final = await stream.finalMessage();
+      if (text) assistantContent.unshift({ type: "text", text });
+
+      return {
+        assistantContent,
+        text,
+        stopReason: mapStopReason(final.stop_reason),
+      };
+    } catch (err) {
+      // Re-throw as a more descriptive error so the TUI can show a useful
+      // message instead of an opaque SDK exception.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("aborted") || msg.includes("abort")) {
+        throw new Error(
+          `Anthropic stream aborted (idle ${Math.round(idleMs / 1000)}s without an event). ` +
+            `Set M3_LLM_IDLE_TIMEOUT_MS=0 to disable.`,
+        );
+      }
+      throw err;
+    } finally {
+      if (watchdog) clearInterval(watchdog);
+    }
   }
 }
