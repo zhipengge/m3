@@ -33,7 +33,6 @@ function ReplInputImpl(props: ReplInputProps) {
     paletteIdx,
     onPaletteIdxChange,
     pendingPermission,
-    onResolvePermission,
     disabled,
     paletteActive = false,
   } = props;
@@ -119,14 +118,10 @@ function ReplInputImpl(props: ReplInputProps) {
     { isActive: paletteActive },
   );
 
-  useInput(
-    (char) => {
-      const c = char.toLowerCase();
-      if (c === "y") onResolvePermission(true);
-      else if (c === "n") onResolvePermission(false);
-    },
-    { isActive: Boolean(pendingPermission) },
-  );
+  // (Permission-prompt key handling — y/n/arrows/Enter/Esc — lives in
+  // the parent useInput in repl-app.tsx so the selected-choice state
+  // and the render both update in the same React commit and the
+  // choice resets cleanly when a new prompt arrives.)
 
   // The TextInput stays focused whenever the input is not disabled, so
   // typing always works. Arrow keys will both move the text cursor and

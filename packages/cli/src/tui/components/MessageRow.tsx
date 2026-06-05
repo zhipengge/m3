@@ -12,15 +12,26 @@ type Props = {
   thinkingExpanded?: boolean;
 };
 
+/**
+ * One chat row — no box border. Borders are reserved for the truly
+ * modal / interactive UI (slash palette, permission prompt, status
+ * bar), so rows are visually flat and the conversation reads as
+ * flowing text. Role differentiation comes from the prefix glyph
+ * and the color of that glyph.
+ *
+ *   you  > hello
+ *   m3   Hi there
+ *   ∙    (tool: Bash)
+ *   ∴    Thinking…
+ *   ⚠    Allow tool?   (only the permission prompt gets a border)
+ */
 function MessageRowImpl(props: Props) {
   const { message, thinkingExpanded = false } = props;
 
   if (message.role === "system") {
     return (
       <Box marginY={0}>
-        <Text color={theme.system} dimColor>
-          ◆ {message.text}
-        </Text>
+        <Text color={theme.muted}>∙ {message.text}</Text>
       </Box>
     );
   }
@@ -38,10 +49,13 @@ function MessageRowImpl(props: Props) {
   if (message.role === "user") {
     return (
       <Box flexDirection="column" marginY={0}>
-        <Text color={theme.user} bold>
-          you
-        </Text>
-        <Text wrap="truncate-end">{message.text}</Text>
+        <Box gap={1}>
+          <Text color={theme.user} bold>
+            you
+          </Text>
+          <Text color={theme.muted}>›</Text>
+          <Text wrap="wrap">{message.text}</Text>
+        </Box>
       </Box>
     );
   }
@@ -53,20 +67,19 @@ function MessageRowImpl(props: Props) {
   const display = hidden > 0 ? "…" + message.text.slice(-DISPLAY_CAP) : message.text;
 
   return (
-    <Box
-      flexDirection="column"
-      marginY={0}
-      borderStyle="round"
-      borderColor={theme.border}
-      paddingX={1}
-    >
-      <Text color={theme.accent} bold>
-        m3
-      </Text>
-      <Text wrap="truncate-end">
-        {display}
-        {message.streaming ? <Text color={theme.accent}>▌</Text> : null}
-      </Text>
+    <Box flexDirection="column" marginY={0}>
+      <Box gap={1}>
+        <Text color={theme.accent} bold>
+          m3
+        </Text>
+        <Text color={theme.muted}>›</Text>
+      </Box>
+      <Box paddingLeft={3}>
+        <Text wrap="truncate-end">
+          {display}
+          {message.streaming ? <Text color={theme.accent}>▌</Text> : null}
+        </Text>
+      </Box>
     </Box>
   );
 }

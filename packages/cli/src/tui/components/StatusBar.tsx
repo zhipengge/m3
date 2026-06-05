@@ -20,7 +20,7 @@ function StatusBarImpl(props: Props) {
   if (props.dashboardUrl) parts.push(props.dashboardUrl);
 
   return (
-    <Box borderStyle="single" borderColor={theme.border} paddingX={1} marginTop={1}>
+    <Box borderStyle="round" borderColor={theme.border} paddingX={1} marginTop={1}>
       <Text dimColor>{parts.join(" · ") || "m3"}</Text>
     </Box>
   );

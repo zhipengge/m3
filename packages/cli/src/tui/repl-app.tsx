@@ -57,6 +57,8 @@ export function ReplApp(props: ReplAppProps) {
   const [pendingPermission, setPendingPermission] = useState<ReplPermissionRequest | null>(
     null,
   );
+  /** Which option in the permission prompt is currently highlighted. */
+  const [permissionChoice, setPermissionChoice] = useState<"allow" | "deny">("allow");
   const [paletteIdx, setPaletteIdx] = useState(0);
   const [pendingAttachments, setPendingAttachments] = useState<ReplMedia>([]);
   const [thinkingExpanded, setThinkingExpandedState] = useState(
@@ -267,11 +269,52 @@ export function ReplApp(props: ReplAppProps) {
     permissionResolveRef.current?.(ok);
     permissionResolveRef.current = null;
     setPendingPermission(null);
+    setPermissionChoice("allow"); // reset for the next prompt
     if (ok) setLoading(true);
   }, []);
 
+  // Reset the choice to "allow" whenever a new prompt arrives, so a stale
+  // selection from a previous prompt doesn't carry over.
+  useEffect(() => {
+    if (pendingPermission) setPermissionChoice("allow");
+  }, [pendingPermission]);
+
   useInput(
     (_char, key) => {
+      // Permission prompt navigation: ←/→ (and Tab/Shift+Tab) cycle between
+      // [Y] allow and [N] deny, Enter confirms the highlighted one, and
+      // Y/N / Esc still work as single-key shortcuts. Lives in the parent
+      // useInput rather than inside <PermissionPrompt> so the choice state
+      // is reset cleanly on prompt change.
+      if (pendingPermission) {
+        if (key.leftArrow || (key.tab && key.shift)) {
+          setPermissionChoice("allow");
+          return;
+        }
+        if (key.rightArrow || (key.tab && !key.shift)) {
+          setPermissionChoice("deny");
+          return;
+        }
+        if (key.return) {
+          resolvePermission(permissionChoice === "allow");
+          return;
+        }
+        if (_char === "y" || _char === "Y") {
+          resolvePermission(true);
+          return;
+        }
+        if (_char === "n" || _char === "N") {
+          resolvePermission(false);
+          return;
+        }
+        if (key.escape) {
+          resolvePermission(false);
+          return;
+        }
+        // Eat everything else while a permission is pending so accidental
+        // typing doesn't leak into the (focused but disabled) input.
+        return;
+      }
       if (key.ctrl && _char === "o") {
         toggleThinkingExpanded();
         return;
@@ -281,10 +324,6 @@ export function ReplApp(props: ReplAppProps) {
         return;
       }
       if (key.ctrl && (_char === "c" || _char === "d")) {
-        if (pendingPermission) {
-          resolvePermission(false);
-          return;
-        }
         exit();
       }
     },
@@ -342,7 +381,7 @@ export function ReplApp(props: ReplAppProps) {
         ) : null}
 
         {pendingPermission ? (
-          <PermissionPrompt request={pendingPermission} />
+          <PermissionPrompt request={pendingPermission} selected={permissionChoice} />
         ) : null}
 
         {showSpinner ? <BreathingSpinner /> : null}
