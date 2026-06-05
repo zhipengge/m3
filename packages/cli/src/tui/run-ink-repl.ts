@@ -32,6 +32,9 @@ export async function runInkRepl(options: InkReplOptions): Promise<void> {
     onSystem(text) {
       getReplUiSink()?.onSystem(text);
     },
+    onTokens(usage) {
+      getReplUiSink()?.onTokens?.(usage);
+    },
   };
 
   const { waitUntilExit } = render(

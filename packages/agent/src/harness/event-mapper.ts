@@ -25,6 +25,19 @@ export function mapHarnessEvent(evt: HarnessEvent): AgentStreamEvent[] {
           summarizedTurns: evt.summarizedTurns,
         },
       ];
+    case "token_usage":
+      return [
+        {
+          type: "token_usage",
+          turn: evt.turn,
+          input: evt.input,
+          output: evt.output,
+          ...(evt.cacheRead !== undefined ? { cacheRead: evt.cacheRead } : {}),
+          ...(evt.cacheCreation !== undefined ? { cacheCreation: evt.cacheCreation } : {}),
+          total: evt.total,
+          cumulative: evt.cumulative,
+        },
+      ];
     case "turn_complete":
       return [];
     default:

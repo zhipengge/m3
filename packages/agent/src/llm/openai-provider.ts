@@ -132,6 +132,13 @@ export class OpenAiChatProvider implements LlmProvider {
       tools,
       max_tokens: params.model.maxTokens,
       stream: true,
+      // OpenAI's protocol puts `usage` on a chunk whose choice has
+      // `finish_reason: "stop"` (or no choice at all). With `include_usage`
+      // the SDK adds a final usage-only chunk. The old code did an early
+      // `break` on `finish_reason === "stop"` which discarded that final
+      // chunk — now we let the stream run to its natural end and capture
+      // `chunk.usage` from any chunk that carries it.
+      stream_options: { include_usage: true },
       ...(modelUsesReasoningSplit(params.model.modelId)
         ? {
             extra_body: {
@@ -145,6 +152,7 @@ export class OpenAiChatProvider implements LlmProvider {
     let text = "";
     let reasoningCumulative = "";
     const toolCalls = new Map<number, { id: string; name: string; args: string }>();
+    let usage: { input: number; output: number; total?: number } | undefined;
 
     // Idle timeout: how long we'll wait without ANY chunk before declaring
     // the stream dead. Previously 120s, which routinely killed slow
@@ -191,11 +199,25 @@ export class OpenAiChatProvider implements LlmProvider {
               `Set M3_LLM_IDLE_TIMEOUT_MS=0 to disable, or use a faster model.`,
           );
         }
+        // Usage may arrive on the final chunk (a chunk with no choice, or
+        // a choice with finish_reason === "stop") when stream_options
+        // include_usage is set. Capture it from every chunk so we never
+        // miss it regardless of which chunk the SDK picks.
+        if (chunk.usage) {
+          const total = chunk.usage.total_tokens ?? undefined;
+          usage = {
+            input: chunk.usage.prompt_tokens ?? 0,
+            output: chunk.usage.completion_tokens ?? 0,
+            ...(total !== undefined ? { total } : {}),
+          };
+        }
+        lastChunkAt = Date.now();
         const choice = chunk.choices[0];
         if (!choice) continue;
-        lastChunkAt = Date.now();
 
-        if (choice.finish_reason === "stop") break;
+        // Don't break on `finish_reason === "stop"` — the stream may
+        // still emit trailing usage-only chunks. Let the for-await
+        // terminate naturally when the SDK closes the iterator.
 
         const rawDelta = choice.delta as Record<string, unknown>;
         const reasoning = extractOpenAiReasoningDelta(rawDelta, reasoningCumulative);
@@ -242,6 +264,15 @@ export class OpenAiChatProvider implements LlmProvider {
       assistantContent,
       text,
       stopReason: toolCalls.size > 0 ? "tool_use" : text ? "end_turn" : null,
+      ...(usage
+        ? {
+            usage: {
+              input: usage.input,
+              output: usage.output,
+              total: usage.total ?? usage.input + usage.output,
+            },
+          }
+        : {}),
     };
   }
 }

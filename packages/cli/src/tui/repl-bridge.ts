@@ -3,6 +3,19 @@ export type ReplPermissionRequest = {
   description: string;
 };
 
+/** Per-turn + cumulative token usage from the LLM provider. */
+export type ReplTokenUsage = {
+  /** This turn's input / output / total. */
+  input: number;
+  output: number;
+  total: number;
+  cacheRead?: number;
+  cacheCreation?: number;
+  /** Running totals for the whole session — the StatusBar reads these
+   *  to show "tok 12.4k (↑8.2k ↓4.2k)". */
+  cumulative: { input: number; output: number; total: number };
+};
+
 /** Bridges gateway webchat callbacks into the Ink REPL (no global state). */
 export type ReplUiSink = {
   onTyping: () => void;
@@ -12,6 +25,8 @@ export type ReplUiSink = {
   onSystem: (text: string) => void;
   /** Interactive tool approval (Ink); resolves when user presses y/n. */
   requestPermission?: (req: ReplPermissionRequest) => Promise<boolean>;
+  /** Per-turn token usage; cumulative is the running session total. */
+  onTokens?: (usage: ReplTokenUsage) => void;
 };
 
 let activeSink: ReplUiSink | null = null;

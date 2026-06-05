@@ -60,6 +60,11 @@ export function ReplApp(props: ReplAppProps) {
   /** Which option in the permission prompt is currently highlighted. */
   const [permissionChoice, setPermissionChoice] = useState<"allow" | "deny">("allow");
   const [paletteIdx, setPaletteIdx] = useState(0);
+  const [tokens, setTokens] = useState<{
+    input: number;
+    output: number;
+    total: number;
+  } | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<ReplMedia>([]);
   const [thinkingExpanded, setThinkingExpandedState] = useState(
     () => props.initialThinkingExpanded ?? false,
@@ -170,6 +175,9 @@ export function ReplApp(props: ReplAppProps) {
           setPendingPermission(req);
         });
       },
+      onTokens(usage) {
+        setTokens(usage.cumulative);
+      },
     }),
     [finalizeLiveThinking, pushCompleted],
   );
@@ -212,6 +220,27 @@ export function ReplApp(props: ReplAppProps) {
     [pushCompleted],
   );
 
+  /** `/cost` — show cumulative token usage in a system row. */
+  const handleCostSlash = useCallback(
+    (): boolean => {
+      if (tokens) {
+        pushCompleted({
+          id: nextId(),
+          role: "system",
+          text: `tokens · in ${tokens.input.toLocaleString()} · out ${tokens.output.toLocaleString()} · total ${tokens.total.toLocaleString()}`,
+        });
+      } else {
+        pushCompleted({
+          id: nextId(),
+          role: "system",
+          text: "tokens · no usage reported yet (provider may not include usage in the stream)",
+        });
+      }
+      return true;
+    },
+    [pushCompleted, tokens],
+  );
+
   const submitLine = useCallback(
     (line: string) => {
       const trimmed = line.trim();
@@ -221,6 +250,16 @@ export function ReplApp(props: ReplAppProps) {
         setInput("");
         setPaletteIdx(0);
         return;
+      }
+      if (/^\/cost$/i.test(normalized)) {
+        handleCostSlash();
+        setInput("");
+        setPaletteIdx(0);
+        return;
+      }
+      if (/^\/(clear|reset|new)$/i.test(normalized)) {
+        // Reset cumulative token usage on session reset.
+        setTokens(null);
       }
       appendUserMessage(normalized);
       setLoading(true);
@@ -235,7 +274,7 @@ export function ReplApp(props: ReplAppProps) {
       setPaletteIdx(0);
       setPendingAttachments([]);
     },
-    [appendUserMessage, handleThinkingSlash, pendingAttachments],
+    [appendUserMessage, handleThinkingSlash, handleCostSlash, pendingAttachments],
   );
 
   /**
@@ -417,7 +456,7 @@ export function ReplApp(props: ReplAppProps) {
           disabled={inputDisabled}
           paletteActive={paletteActive}
         />
-        <StatusBar model={props.modelLabel} dashboardUrl={props.dashboardUrl} />
+        <StatusBar model={props.modelLabel} dashboardUrl={props.dashboardUrl} tokens={tokens ?? undefined} />
       </Box>
     </Box>
   );

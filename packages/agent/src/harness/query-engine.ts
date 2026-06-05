@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentConfig, ResolvedModel } from "@m3/config";
 import { resolveAgentWorkspace } from "@m3/config";
 import type { PermissionHandler } from "../permissions/manager.js";
-import { runQueryLoop } from "./query-loop.js";
+import { runQueryLoopSafe } from "./query-loop.js";
 import type { HarnessEvent } from "./types.js";
 import { SessionMessageStore } from "../session/message-store.js";
 import { collectTools } from "../tools/tool-source.js";
@@ -42,7 +42,7 @@ export class QueryEngine {
     };
     const { tools, systemPrompt } = await collectTools(this.options.agent);
 
-    const loop = runQueryLoop({
+    const loop = runQueryLoopSafe({
       prompt: params.prompt,
       sessionId,
       cwd,
@@ -66,7 +66,15 @@ export class QueryEngine {
       result = await loop.next();
     }
 
-    this.store.save(sessionId, result.value.messages);
-    return { text: result.value.text, sessionId };
+    // `result.value` is QueryLoopResult | undefined: runQueryLoopSafe
+    // yields a final tick carrying the underlying result and returns
+    // it; if the loop exited with an exception, the for-await above
+    // re-throws and we never reach this point. Still — narrow for TS.
+    const finalResult = result.value;
+    if (!finalResult) {
+      throw new Error("agent run exited without producing a result");
+    }
+    this.store.save(sessionId, finalResult.messages);
+    return { text: finalResult.text, sessionId };
   }
 }

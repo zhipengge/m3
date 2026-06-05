@@ -150,10 +150,29 @@ export class AnthropicLlmProvider implements LlmProvider {
       const final = await stream.finalMessage();
       if (text) assistantContent.unshift({ type: "text", text });
 
+      // Anthropic returns a full Usage object on the final message
+      // (input_tokens, output_tokens, cache_creation_input_tokens,
+      // cache_read_input_tokens). Normalize into our shared TokenUsage.
+      const u = final.usage;
+      const usage = u
+        ? {
+            input: u.input_tokens ?? 0,
+            output: u.output_tokens ?? 0,
+            cacheRead: u.cache_read_input_tokens ?? undefined,
+            cacheCreation: u.cache_creation_input_tokens ?? undefined,
+            total:
+              (u.input_tokens ?? 0) +
+              (u.output_tokens ?? 0) +
+              (u.cache_read_input_tokens ?? 0) +
+              (u.cache_creation_input_tokens ?? 0),
+          }
+        : undefined;
+
       return {
         assistantContent,
         text,
         stopReason: mapStopReason(final.stop_reason),
+        ...(usage ? { usage } : {}),
       };
     } catch (err) {
       // Re-throw as a more descriptive error so the TUI can show a useful

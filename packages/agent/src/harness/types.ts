@@ -74,7 +74,19 @@ export type HarnessEvent =
   | { type: "session_id"; sessionId: string }
   | { type: "lifecycle"; phase: "start" | "end" | "error"; error?: string }
   | { type: "context_compressed"; keptMessages: number; summarizedTurns: number }
-  | { type: "turn_complete"; turn: number };
+  | { type: "turn_complete"; turn: number }
+  | {
+      type: "token_usage";
+      turn: number;
+      input: number;
+      output: number;
+      cacheRead?: number;
+      cacheCreation?: number;
+      total: number;
+      /** Running total across the whole session (so consumers don't
+       * need to accumulate themselves). Reset on /clear. */
+      cumulative: { input: number; output: number; total: number };
+    };
 
 export type QueryLoopOptions = {
   prompt: string;

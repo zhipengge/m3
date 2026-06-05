@@ -43,6 +43,16 @@ export type AgentStreamEvent =
   | { type: "session_id"; sessionId: string }
   | { type: "lifecycle"; phase: "start" | "end" | "error"; error?: string }
   | { type: "context_compressed"; keptMessages: number; summarizedTurns: number }
+  | {
+      type: "token_usage";
+      turn: number;
+      input: number;
+      output: number;
+      cacheRead?: number;
+      cacheCreation?: number;
+      total: number;
+      cumulative: { input: number; output: number; total: number };
+    }
   | { type: "result"; text: string; sessionId?: string; usage?: Record<string, number> };
 
 export type AgentRunResult = {
