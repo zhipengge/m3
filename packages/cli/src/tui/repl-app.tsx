@@ -6,6 +6,7 @@ import type { InboundMessage } from "@m3/channels";
 import { BreathingSpinner } from "./components/BreathingSpinner.js";
 import type { ChatLine } from "./components/message-types.js";
 import { MessageRow } from "./components/MessageRow.js";
+import { PermissionPrompt } from "./components/PermissionPrompt.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { ReplInput } from "./repl-input.js";
 import { isSlashPaletteActive } from "./repl-palette.js";
@@ -341,22 +342,7 @@ export function ReplApp(props: ReplAppProps) {
         ) : null}
 
         {pendingPermission ? (
-          <Box
-            flexDirection="column"
-            borderStyle="round"
-            borderColor={theme.warn}
-            paddingX={1}
-            marginY={1}
-          >
-            <Text bold color={theme.warn}>
-              Allow tool?
-            </Text>
-            <Text>
-              {pendingPermission.toolName}
-              {pendingPermission.description ? ` — ${pendingPermission.description}` : ""}
-            </Text>
-            <Text dimColor>[y] allow · [n] deny</Text>
-          </Box>
+          <PermissionPrompt request={pendingPermission} />
         ) : null}
 
         {showSpinner ? <BreathingSpinner /> : null}

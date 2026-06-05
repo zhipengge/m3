@@ -43,6 +43,18 @@ export const ThinkingBlock = memo(function ThinkingBlock(props: ThinkingBlockPro
     );
   }
 
+  // Empty body during streaming — just the label, no orphan cursor block.
+  // Before the first delta arrives the body would be an empty wrapped line
+  // with a lone "▌" — that looks broken. Wait for the first chunk before
+  // drawing the body region.
+  if (text.length === 0) {
+    return (
+      <Box flexDirection="column" marginY={0} gap={0} width="100%">
+        <Text dimColor italic>{label}</Text>
+      </Box>
+    );
+  }
+
   const { display, hidden } = buildDisplay(text);
 
   return (
