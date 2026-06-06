@@ -7,4 +7,8 @@ export type ChatLine = {
   toolName?: string;
   toolDetail?: string;
   toolIsError?: boolean;
+  /** Optional fields for the error role. */
+  errorKind?: import("./ErrorCard.js").ErrorKind;
+  errorStack?: string;
+  errorHint?: string;
 };

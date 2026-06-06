@@ -3,6 +3,7 @@ import { Box, Text } from "ink";
 import { MarkdownBlock } from "../render-markdown.js";
 import { ThinkingBlock } from "./ThinkingBlock.js";
 import { ToolResultCard } from "./ToolResultCard.js";
+import { ErrorCard, classifyError, type ErrorKind } from "./ErrorCard.js";
 import { theme } from "../theme.js";
 import type { ChatLine } from "./message-types.js";
 
@@ -44,11 +45,17 @@ function MessageRowImpl(props: Props) {
   }
 
   if (message.role === "error") {
+    // Use the rich ErrorCard if we have classified metadata; fall
+    // back to a plain red ✗ line for un-classified legacy entries.
+    const kind: ErrorKind = message.errorKind ?? classifyError(message.text);
     return (
       <Box marginY={0}>
-        <Text color={theme.err} bold>
-          ✗ {message.text}
-        </Text>
+        <ErrorCard
+          kind={kind}
+          message={message.text}
+          {...(message.errorStack ? { stack: message.errorStack } : {})}
+          {...(message.errorHint ? { hint: message.errorHint } : {})}
+        />
       </Box>
     );
   }
