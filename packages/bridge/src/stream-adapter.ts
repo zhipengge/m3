@@ -16,7 +16,12 @@ export type StreamAdapterOptions = {
     cumulative: { input: number; output: number; total: number };
   }) => void;
   onToolUse?: (info: { id: string; name: string; input: unknown }) => void;
-  onToolResult?: (info: { id: string; name: string; isError?: boolean }) => void;
+  onToolResult?: (info: {
+    id: string;
+    name: string;
+    isError?: boolean;
+    output?: string;
+  }) => void;
 };
 
 /**
@@ -91,6 +96,7 @@ export class StreamAdapter {
           id: event.id,
           name: event.name,
           isError: event.isError,
+          output: event.output,
         });
         if (this.options.verboseTools && event.output) {
           await this.dispatcher.deliver({

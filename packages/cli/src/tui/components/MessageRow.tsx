@@ -2,6 +2,7 @@ import { memo } from "react";
 import { Box, Text } from "ink";
 import { MarkdownBlock } from "../render-markdown.js";
 import { ThinkingBlock } from "./ThinkingBlock.js";
+import { ToolResultCard } from "./ToolResultCard.js";
 import { theme } from "../theme.js";
 import type { ChatLine } from "./message-types.js";
 
@@ -56,6 +57,19 @@ function MessageRowImpl(props: Props) {
     return (
       <Box marginY={0}>
         <Text color={theme.muted}>· {message.text}</Text>
+      </Box>
+    );
+  }
+
+  if (message.role === "tool_output") {
+    return (
+      <Box marginY={0}>
+        <ToolResultCard
+          toolName={message.toolName ?? "?"}
+          output={message.text}
+          isError={message.toolIsError}
+          {...(message.toolDetail !== undefined ? { detail: message.toolDetail } : {})}
+        />
       </Box>
     );
   }

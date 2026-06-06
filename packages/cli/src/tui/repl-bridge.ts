@@ -30,8 +30,16 @@ export type ReplUiSink = {
   /** Tool invocation just started — surface a "▸ Read foo.ts" line and
    *  capture a start timestamp so onToolResult can compute duration. */
   onToolUse?: (info: { id: string; name: string; input: unknown }) => void;
-  /** Tool invocation finished — push into the recent-tools timeline. */
-  onToolResult?: (info: { id: string; name: string; isError?: boolean }) => void;
+  /** Tool invocation finished — push into the recent-tools timeline
+   *  and surface the output in the message stream. `output` may be
+   *  truncated to a few KB by the bridge pipeline; for verbose tools
+   *  the user can read the full text in the transcript. */
+  onToolResult?: (info: {
+    id: string;
+    name: string;
+    isError?: boolean;
+    output?: string;
+  }) => void;
 };
 
 let activeSink: ReplUiSink | null = null;

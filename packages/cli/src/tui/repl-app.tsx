@@ -264,7 +264,7 @@ export function ReplApp(props: ReplAppProps) {
         }
         forceTick((n) => n + 1); // refresh status bar so "N tools" updates
       },
-      onToolResult(info: { id: string; name: string; isError?: boolean }) {
+      onToolResult(info: { id: string; name: string; isError?: boolean; output?: string }) {
         const startedAt = toolStartRef.current.get(info.id) ?? Date.now();
         toolStartRef.current.delete(info.id);
         const detail = currentToolDetailRef.current ?? info.name;
@@ -280,6 +280,21 @@ export function ReplApp(props: ReplAppProps) {
         // Clear the diff when the tool finishes — the user has seen
         // it, and the next tool call (or a new prompt) will replace it.
         setPendingDiff(null);
+        // Surface the tool output as a chat row so the user can see
+        // what the tool just produced. Skip tools whose output is
+        // already covered by a dedicated card (CodeDiff for Edit/Write
+        // is rendered separately above; we still want to surface Bash /
+        // Read / Grep / Glob output here).
+        if (info.output !== undefined && info.name !== "Edit" && info.name !== "Write") {
+          pushCompleted({
+            id: nextId(),
+            role: "tool_output",
+            text: info.output,
+            toolName: info.name,
+            toolDetail: detail,
+            toolIsError: info.isError,
+          });
+        }
       },
       requestPermission(req: ReplPermissionRequest) {
         streamBufferRef.current.flushNow();
