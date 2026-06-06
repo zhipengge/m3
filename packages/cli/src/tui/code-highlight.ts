@@ -18,8 +18,8 @@
  */
 
 // Common keywords across the languages m3 most often writes. The list
-// is small on purpose — fewer false positives, and the colors are
-// keyed so the user can scan a diff fast.
+// is on the long side — false positives are far more tolerable
+// than missing a real keyword in a diff the user is staring at.
 const KEYWORDS = new Set([
   // JS / TS
   "function", "class", "const", "let", "var", "return", "if", "else",
@@ -27,29 +27,39 @@ const KEYWORDS = new Set([
   "import", "export", "from", "as", "default", "async", "await",
   "new", "this", "super", "try", "catch", "finally", "throw",
   "typeof", "instanceof", "void", "delete", "in", "of", "yield",
-  "interface", "type", "enum", "namespace", "declare",
-  "true", "false", "null", "undefined", "async",
-  // Python / Go / Rust common
-  "fn", "def", "class", "struct", "trait", "impl", "pub", "use",
-  "let", "const", "static", "mut", "ref", "match", "mod", "crate",
-  "func", "package", "import", "nil", "None", "True", "False",
-  "self", "Self",
+  "interface", "type", "enum", "namespace", "declare", "abstract",
+  "public", "private", "protected", "readonly", "static", "async",
+  "implements", "extends", "with", "satisfies",
+  // constants
+  "true", "false", "null", "undefined", "None", "True", "False", "nil",
+  // Python
+  "def", "lambda", "elif", "yield", "global", "nonlocal", "pass",
+  "raise", "with", "as", "is", "not", "and", "or", "in",
+  "self", "cls",
   // Go
-  "chan", "go", "defer", "select", "range", "map",
-  // SQL-ish
-  "SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE",
-  // Bash
-  "if", "fi", "then", "else", "elif", "for", "do", "done",
-  "function", "export",
+  "func", "package", "import", "defer", "select", "range", "chan",
+  "go", "map", "struct", "interface", "fallthrough", "goto",
+  // Rust
+  "fn", "let", "mut", "pub", "use", "mod", "crate", "trait",
+  "impl", "self", "ref", "match", "where", "unsafe", "as", "dyn",
+  "move", "box",
+  // SQL
+  "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE",
+  "SET", "DELETE", "CREATE", "TABLE", "INDEX", "DROP", "ALTER",
+  "JOIN", "ON", "AS", "AND", "OR", "NOT", "NULL", "IS", "IN",
+  "LIKE", "ORDER", "BY", "GROUP", "HAVING", "LIMIT", "OFFSET",
+  // Bash / shell
+  "fi", "then", "elif", "done", "esac", "function", "export",
+  "local", "readonly", "declare",
+  // Common DSL / config keywords
+  "true", "false", "yes", "no", "on", "off", "enabled", "disabled",
 ]);
 
-type Token = { text: string; kind: "kw" | "str" | "num" | "cmt" | "plain" };
+type Token = { text: string; kind: "kw" | "str" | "num" | "cmt" | "fn" | "plain" };
 
-/** Tokenize a single line. Cheap — a single regex sweep. */
+/** Tokenize a single line. Cheap — a single forward pass. */
 export function tokenize(line: string): Token[] {
   const out: Token[] = [];
-  // Walk the line, slicing out comments and strings first (they take
-  // priority over keyword matching).
   let i = 0;
   let buf = "";
   const flush = (kind: Token["kind"]) => {
@@ -60,16 +70,14 @@ export function tokenize(line: string): Token[] {
   };
   while (i < line.length) {
     const c = line[i]!;
-    // Line comment
+    // Line comment (// …, # …)
     if (c === "/" && line[i + 1] === "/") {
       flush("plain");
       out.push({ text: line.slice(i), kind: "cmt" });
       i = line.length;
       continue;
     }
-    if (c === "#" && !["(", " ", "\t", '"', "'", "`"].includes(line[i - 1] ?? "")) {
-      // Python / shell style — but only if preceded by whitespace-ish,
-      // to avoid false-positive on `#` inside strings.
+    if (c === "#" && !["(", " ", "\t", '"', "'", "`", ""].includes(line[i - 1] ?? "")) {
       flush("plain");
       out.push({ text: line.slice(i), kind: "cmt" });
       i = line.length;
@@ -95,7 +103,7 @@ export function tokenize(line: string): Token[] {
       i = j;
       continue;
     }
-    // Number
+    // Number literal
     if (/[0-9]/.test(c) && (i === 0 || /[^A-Za-z_0-9]/.test(line[i - 1] ?? ""))) {
       let j = i;
       while (j < line.length && /[0-9.xXbA-Fa-f_eE+-]/.test(line[j]!)) j += 1;
@@ -109,9 +117,21 @@ export function tokenize(line: string): Token[] {
       let j = i;
       while (j < line.length && /[A-Za-z0-9_$]/.test(line[j]!)) j += 1;
       const word = line.slice(i, j);
+      // Match keywords case-sensitively for SQL (uppercase) and
+      // case-insensitively for everything else.
       if (KEYWORDS.has(word) || KEYWORDS.has(word.toLowerCase())) {
         flush("plain");
         out.push({ text: word, kind: "kw" });
+        i = j;
+        continue;
+      }
+      // Mark function call sites: identifier immediately followed by `(`.
+      // The call NAME itself is a plain identifier; we just mark the
+      // trailing paren-less word as "fn" for a slight visual hint.
+      // (We don't try to track whether it's actually a function —
+      // that would need a parser.)
+      if (line[j] === "(" && /[A-Za-z_]/.test(word[0]!)) {
+        buf += word;
         i = j;
         continue;
       }

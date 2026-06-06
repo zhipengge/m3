@@ -53,6 +53,38 @@ describe("tokenize", () => {
     expect(kw.map((t) => t.text)).toContain("function");
     expect(kw.map((t) => t.text)).toContain("return");
   });
+
+  it("highlights Python keywords", () => {
+    const tokens = tokenize("def hello(self):\n    return None");
+    const kw = tokens.filter((t) => t.kind === "kw");
+    expect(kw.map((t) => t.text)).toEqual(
+      expect.arrayContaining(["def", "self", "return", "None"]),
+    );
+  });
+
+  it("highlights Rust keywords", () => {
+    const tokens = tokenize("pub fn main() { let mut x = 0; }");
+    const kw = tokens.filter((t) => t.kind === "kw");
+    expect(kw.map((t) => t.text)).toEqual(
+      expect.arrayContaining(["pub", "fn", "let", "mut"]),
+    );
+  });
+
+  it("highlights SQL keywords", () => {
+    const tokens = tokenize("SELECT id, name FROM users WHERE id = 1;");
+    const kw = tokens.filter((t) => t.kind === "kw");
+    expect(kw.map((t) => t.text)).toEqual(
+      expect.arrayContaining(["SELECT", "FROM", "WHERE"]),
+    );
+  });
+
+  it("highlights access modifiers (TS/Java)", () => {
+    const tokens = tokenize("class Foo { private readonly x: number; }");
+    const kw = tokens.filter((t) => t.kind === "kw");
+    expect(kw.map((t) => t.text)).toEqual(
+      expect.arrayContaining(["class", "private", "readonly"]),
+    );
+  });
 });
 
 describe("lineDiff", () => {

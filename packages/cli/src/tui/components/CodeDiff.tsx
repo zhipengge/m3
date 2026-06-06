@@ -87,28 +87,30 @@ function TokenizedLine(props: { line: string; opColor: string }) {
     <Text>
       {tokens.map((t, i) => {
         let color: string;
+        let bold = false;
         switch (t.kind) {
           case "kw":
-            color = theme.accent;
+            // Keywords stand out with a saturated color + bold.
+            // theme.brand (warm orange) reads strongly against both
+            // the red/green op colors of removed/added lines.
+            color = theme.brand;
+            bold = true;
             break;
           case "str":
             color = theme.warn;
             break;
           case "num":
-            color = theme.brand;
+            color = theme.accent;
             break;
           case "cmt":
             color = theme.muted;
             break;
           default:
-            // Use the line's op color (so removed text is red, added is
-            // green, context is muted) — overridden below for keyword /
-            // string / number / comment segments.
             color = props.opColor;
             break;
         }
         return (
-          <Text key={i} color={color}>
+          <Text key={i} color={color} bold={bold}>
             {t.text}
           </Text>
         );
