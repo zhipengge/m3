@@ -68,17 +68,25 @@ export function buildStatusBarText(props: Props): string {
 }
 
 function StatusBarImpl(props: Props) {
+  // Each segment is wrapped with `truncate-end` so that when the
+  // terminal narrows, segments shrink from the right rather than the
+  // bar wrapping to a new line (which would push the rest of the
+  // live region up/down on every resize — the "flicker on resize"
+  // bug). The order below is also a priority: when the bar runs
+  // out of room, the dashboard URL is the first to disappear,
+  // then duration, then tools. Model / tokens / ctx% always
+  // remain because they carry the most signal.
   const parts: React.ReactNode[] = [];
   if (props.model) {
     parts.push(
-      <Text key="model" color={theme.accent} bold>
+      <Text key="model" color={theme.accent} bold wrap="truncate-end">
         {props.model}
       </Text>,
     );
   }
   if (props.tokens && (props.tokens.input || props.tokens.output)) {
     parts.push(
-      <Text key="tok" color={theme.muted}>
+      <Text key="tok" color={theme.muted} wrap="truncate-end">
         {`tok ${fmtTokens(props.tokens.total)} ` +
           `(↑${fmtTokens(props.tokens.input)} ↓${fmtTokens(props.tokens.output)})`}
       </Text>,
@@ -88,7 +96,7 @@ function StatusBarImpl(props: Props) {
     const pct = Math.min(100, Math.round(props.contextPct * 100));
     const { bar, color, warn } = contextBar(pct);
     parts.push(
-      <Box key="ctx" gap={0}>
+      <Box key="ctx" gap={0} flexShrink={0}>
         <Text color={color}>ctx </Text>
         <Text color={color}>{bar}</Text>
         <Text color={warn ? theme.warn : theme.muted}>{` ${pct}%`}</Text>
@@ -97,14 +105,14 @@ function StatusBarImpl(props: Props) {
   }
   if (props.sessionMs !== undefined) {
     parts.push(
-      <Text key="dur" color={theme.muted}>
+      <Text key="dur" color={theme.muted} wrap="truncate-end">
         {fmtDuration(props.sessionMs)}
       </Text>,
     );
   }
   if (props.toolCalls !== undefined) {
     parts.push(
-      <Text key="tools" color={theme.muted}>
+      <Text key="tools" color={theme.muted} wrap="truncate-end">
         {`${props.toolCalls} tools`}
       </Text>,
     );
@@ -112,14 +120,19 @@ function StatusBarImpl(props: Props) {
   if (props.goal) parts.push(<Text key="goal" color={theme.muted}>{"◎ goal"}</Text>);
   if (props.dashboardUrl) {
     parts.push(
-      <Text key="dash" color={theme.muted}>
+      <Text key="dash" color={theme.muted} wrap="truncate-end">
         {props.dashboardUrl}
       </Text>,
     );
   }
-  // Join with " · " dots. We need a wrapper for separators since
-  // Ink Box can't intersperse plain string children with styled Text
-  // children without a Box. Flatten the parts by joining with Text.
+  // Join with " · " dots. Each segment is wrapped in its own
+  // `truncate-end` <Text> so that on terminal resize the bar stays a
+  // single line — when the bar doesn't fit, secondary segments
+  // (duration, tools, dashboard) truncate from the right rather
+  // than the bar wrapping to 2+ lines. The wrap-to-new-line
+  // behavior was the main cause of the "flicker on resize" bug:
+  // the bar's height changes (1→2 lines, then 2→1) and pushes
+  // the rest of the live region up/down on every resize.
   const flat: React.ReactNode[] = [];
   parts.forEach((p, i) => {
     if (i > 0) flat.push(<Text key={`sep-${i}`}>{` · `}</Text>);
@@ -132,7 +145,9 @@ function StatusBarImpl(props: Props) {
       paddingX={1}
       marginTop={1}
       flexDirection="row"
-      flexWrap="wrap"
+      flexShrink={0}
+      width="100%"
+      overflowX="hidden"
     >
       {flat.length > 0 ? flat : <Text dimColor>m3</Text>}
     </Box>
