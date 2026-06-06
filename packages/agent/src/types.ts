@@ -38,8 +38,8 @@ export type AgentStreamEvent =
   | { type: "assistant_delta"; delta: string }
   | { type: "reasoning_delta"; delta: string }
   | { type: "assistant_message"; text: string }
-  | { type: "tool_use"; name: string; input?: unknown }
-  | { type: "tool_result"; name: string; output?: string }
+  | { type: "tool_use"; id: string; name: string; input?: unknown }
+  | { type: "tool_result"; id: string; name: string; output?: string; isError?: boolean }
   | { type: "session_id"; sessionId: string }
   | { type: "lifecycle"; phase: "start" | "end" | "error"; error?: string }
   | { type: "context_compressed"; keptMessages: number; summarizedTurns: number }

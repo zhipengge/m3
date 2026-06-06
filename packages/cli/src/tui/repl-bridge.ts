@@ -27,6 +27,11 @@ export type ReplUiSink = {
   requestPermission?: (req: ReplPermissionRequest) => Promise<boolean>;
   /** Per-turn token usage; cumulative is the running session total. */
   onTokens?: (usage: ReplTokenUsage) => void;
+  /** Tool invocation just started — surface a "▸ Read foo.ts" line and
+   *  capture a start timestamp so onToolResult can compute duration. */
+  onToolUse?: (info: { id: string; name: string; input: unknown }) => void;
+  /** Tool invocation finished — push into the recent-tools timeline. */
+  onToolResult?: (info: { id: string; name: string; isError?: boolean }) => void;
 };
 
 let activeSink: ReplUiSink | null = null;

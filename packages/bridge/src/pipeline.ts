@@ -10,6 +10,8 @@ import {
   pushWebChatReasoningDelta,
   pushWebChatSystem,
   pushWebChatTokens,
+  pushWebChatToolResult,
+  pushWebChatToolUse,
 } from "@m3/channel-extensions";
 import {
   createReplyDispatcher,
@@ -282,6 +284,14 @@ export class MessagePipeline {
         onTokens:
           finalized.channelId === "webchat"
             ? (usage) => pushWebChatTokens(finalized.peerId, usage)
+            : undefined,
+        onToolUse:
+          finalized.channelId === "webchat"
+            ? (info) => pushWebChatToolUse(finalized.peerId, info)
+            : undefined,
+        onToolResult:
+          finalized.channelId === "webchat"
+            ? (info) => pushWebChatToolResult(finalized.peerId, info)
             : undefined,
         onSystemNotice:
           finalized.channelId === "webchat"

@@ -16,6 +16,8 @@ export type WebChatReplSink = {
   onReasoningDelta?: (delta: string) => void;
   onSystem?: (text: string) => void;
   onTokens?: (usage: WebChatTokenUsage) => void;
+  onToolUse?: (info: { id: string; name: string; input: unknown }) => void;
+  onToolResult?: (info: { id: string; name: string; isError?: boolean }) => void;
 };
 
 /** Token usage event forwarded to the REPL. `cumulative` is the
@@ -37,6 +39,8 @@ type WebChatClient = {
   onReasoningDelta?: (delta: string) => void;
   onSystem?: (text: string) => void;
   onTokens?: (usage: WebChatTokenUsage) => void;
+  onToolUse?: (info: { id: string; name: string; input: unknown }) => void;
+  onToolResult?: (info: { id: string; name: string; isError?: boolean }) => void;
 };
 
 const clients = new Map<string, WebChatClient>();
@@ -81,6 +85,8 @@ function normalizeHandler(
     onReasoningDelta: handler.onReasoningDelta,
     onSystem: handler.onSystem,
     onTokens: handler.onTokens,
+    onToolUse: handler.onToolUse,
+    onToolResult: handler.onToolResult,
   };
 }
 
@@ -133,6 +139,20 @@ export function pushWebChatSystem(peerId: string, text: string): void {
 
 export function pushWebChatTokens(peerId: string, usage: WebChatTokenUsage): void {
   clients.get(peerId)?.onTokens?.(usage);
+}
+
+export function pushWebChatToolUse(
+  peerId: string,
+  info: { id: string; name: string; input: unknown },
+): void {
+  clients.get(peerId)?.onToolUse?.(info);
+}
+
+export function pushWebChatToolResult(
+  peerId: string,
+  info: { id: string; name: string; isError?: boolean },
+): void {
+  clients.get(peerId)?.onToolResult?.(info);
 }
 
 export function simulateWebChatInbound(

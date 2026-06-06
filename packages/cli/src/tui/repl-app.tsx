@@ -3,6 +3,8 @@ import { Box, Static, Text, useApp, useInput } from "ink";
 import { listCommands } from "@m3/commands";
 import { saveChannelMedia } from "@m3/channel-extensions";
 import type { InboundMessage } from "@m3/channels";
+import { describeToolCall } from "@m3/agent";
+import { ActivityFooter, type RecentTool } from "./components/ActivityFooter.js";
 import { BreathingSpinner } from "./components/BreathingSpinner.js";
 import type { ChatLine } from "./components/message-types.js";
 import { MessageRow } from "./components/MessageRow.js";
@@ -34,6 +36,8 @@ export type ReplAppProps = {
 
 const MAX_COMPLETED = 80;
 const BANNER_ID = "__m3_banner__";
+/** How many recent completed tools to show in the footer timeline. */
+const RECENT_TOOLS_MAX = 5;
 
 let msgCounter = 0;
 function nextId(): string {
@@ -69,6 +73,40 @@ export function ReplApp(props: ReplAppProps) {
   const [thinkingExpanded, setThinkingExpandedState] = useState(
     () => props.initialThinkingExpanded ?? false,
   );
+  /**
+   * Live tool activity. `current` is the tool call currently in flight
+   * (rendered as the "▸ Read foo.ts" line above the spinner). `recent`
+   * is a bounded ring of the last few completed calls shown in the
+   * footer timeline ("Recent: Read · Bash · Edit"). Together they
+   * give the user a clear "what is the agent doing right now" view
+   * during long multi-tool turns.
+   */
+  const [currentTool, setCurrentTool] = useState<RecentTool | undefined>(undefined);
+  const [recentTools, setRecentTools] = useState<RecentTool[]>([]);
+  const [turnCount, setTurnCount] = useState(0);
+  /** Per-call startedAt timestamp, captured when tool_use fires so we
+   *  can compute durationMs in tool_result. */
+  const toolStartRef = useRef<Map<string, number>>(new Map());
+  /** Set when the user submits a prompt; used by onDeliver to compute
+   *  the "done in 3.4s" suffix. Reset on next submit. */
+  const pendingTurnStartedAtRef = useRef<number | undefined>(undefined);
+  /** Session start wall-clock — drives the "0s / 5m / 1.2h" gauge in
+   *  the status bar. */
+  const sessionStartRef = useRef<number>(Date.now());
+  /** Total tool invocations this session (visible in the status bar). */
+  const toolCountRef = useRef<number>(0);
+  const [, forceTick] = useState(0);
+  // Refresh the duration gauge every 30 seconds. Cheap and rare enough
+  // not to interfere with the streaming/spinner cadences.
+  useEffect(() => {
+    const id = setInterval(() => forceTick((n) => n + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  /** Latest currentTool detail, used inside the onToolResult sink
+   *  closure (which is itself memoised) so we can look up the
+   *  description without re-creating the sink every render. */
+  const currentToolDetailRef = useRef<string | undefined>(undefined);
+  currentToolDetailRef.current = currentTool?.detail;
   const permissionResolveRef = useRef<((ok: boolean) => void) | null>(null);
   const onSubmitRef = useRef(props.onSubmit);
   onSubmitRef.current = props.onSubmit;
@@ -152,6 +190,23 @@ export function ReplApp(props: ReplAppProps) {
         streamBufferRef.current.flushNow();
         setLoading(false);
         finalizeLiveThinking();
+        // Surface "✓ done in 3.4s" as a brief activity line so the user
+        // gets a clear completion signal — without it, the live-region
+        // cursor just disappears and the next line is ambiguous about
+        // whether the turn really finished.
+        const finishedAt = Date.now();
+        const elapsed = pendingTurnStartedAtRef.current
+          ? Math.max(0, finishedAt - pendingTurnStartedAtRef.current)
+          : undefined;
+        pendingTurnStartedAtRef.current = undefined;
+        if (elapsed !== undefined && elapsed > 500) {
+          pushCompleted({
+            id: nextId(),
+            role: "activity",
+            text: `✓ done in ${(elapsed / 1000).toFixed(1)}s`,
+          });
+        }
+        setCurrentTool(undefined);
         setLiveAssistant((current) => {
           if (current) {
             pushCompleted({ ...current, text, streaming: false });
@@ -165,7 +220,39 @@ export function ReplApp(props: ReplAppProps) {
       },
       onSystem(text: string) {
         streamBufferRef.current.flushNow();
-        pushCompleted({ id: nextId(), role: "system", text });
+        // Heuristic: if the message looks like a failure, render as an
+        // error row (red ✗ prefix) instead of a dim system bullet —
+        // makes problems stand out in the scrollback.
+        const looksLikeError =
+          /\b(error|failed|denied|rejected|timeout|fatal)\b/i.test(text) ||
+          text.startsWith("Tool denied") ||
+          text.startsWith("Permission denied");
+        pushCompleted({
+          id: nextId(),
+          role: looksLikeError ? "error" : "system",
+          text,
+        });
+      },
+      onToolUse(info: { id: string; name: string; input: unknown }) {
+        const detail = describeToolCall(info.name, info.input);
+        toolStartRef.current.set(info.id, Date.now());
+        toolCountRef.current += 1;
+        setCurrentTool({ name: info.name, detail, running: true });
+        forceTick((n) => n + 1); // refresh status bar so "N tools" updates
+      },
+      onToolResult(info: { id: string; name: string; isError?: boolean }) {
+        const startedAt = toolStartRef.current.get(info.id) ?? Date.now();
+        toolStartRef.current.delete(info.id);
+        const detail = currentToolDetailRef.current ?? info.name;
+        const tool: RecentTool = {
+          name: info.name,
+          detail,
+          running: false,
+          isError: info.isError,
+          durationMs: Date.now() - startedAt,
+        };
+        setRecentTools((prev) => [tool, ...prev].slice(0, RECENT_TOOLS_MAX));
+        setCurrentTool(undefined);
       },
       requestPermission(req: ReplPermissionRequest) {
         streamBufferRef.current.flushNow();
@@ -266,6 +353,12 @@ export function ReplApp(props: ReplAppProps) {
       setLiveThinking(null);
       setLiveAssistant(null);
       streamBufferRef.current.flushNow();
+      // Mark the start of this turn so onDeliver can show "✓ done in 3.4s"
+      pendingTurnStartedAtRef.current = Date.now();
+      // Reset the tool timeline — a new turn gets a fresh "what is the
+      // agent doing right now" view.
+      setRecentTools([]);
+      setTurnCount((n) => n + 1);
       // Snapshot the attachments so a Ctrl+V race during the await doesn't
       // mutate the array after we've already submitted it.
       const media = pendingAttachments.length > 0 ? pendingAttachments : undefined;
@@ -415,13 +508,24 @@ export function ReplApp(props: ReplAppProps) {
         {liveAssistant ? (
           <MessageRow message={liveAssistant} thinkingExpanded={false} />
         ) : null}
-        {completed.length <= 1 && !liveThinking && !liveAssistant ? (
-          <Text dimColor>Send a message or type / for commands</Text>
+        {completed.length <= 1 && !liveThinking && !liveAssistant && !currentTool ? (
+          <Box flexDirection="column" marginY={0}>
+            <Text color={theme.muted}>Send a message or type / for commands</Text>
+            {recentTools.length > 0 ? (
+              <Text color={theme.muted}>
+                Last: {recentTools[0]!.name} {recentTools[0]!.durationMs !== undefined
+                  ? `${(recentTools[0]!.durationMs! / 1000).toFixed(1)}s`
+                  : ""}
+              </Text>
+            ) : null}
+          </Box>
         ) : null}
 
         {pendingPermission ? (
           <PermissionPrompt request={pendingPermission} selected={permissionChoice} />
         ) : null}
+
+        <ActivityFooter current={currentTool} recent={recentTools} turns={turnCount} />
 
         {showSpinner ? <BreathingSpinner /> : null}
 
@@ -456,7 +560,13 @@ export function ReplApp(props: ReplAppProps) {
           disabled={inputDisabled}
           paletteActive={paletteActive}
         />
-        <StatusBar model={props.modelLabel} dashboardUrl={props.dashboardUrl} tokens={tokens ?? undefined} />
+        <StatusBar
+          model={props.modelLabel}
+          dashboardUrl={props.dashboardUrl}
+          tokens={tokens ?? undefined}
+          sessionMs={Date.now() - sessionStartRef.current}
+          toolCalls={toolCountRef.current}
+        />
       </Box>
     </Box>
   );

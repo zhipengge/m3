@@ -57,10 +57,11 @@ describe("buildStatusBarText", () => {
     expect(buildStatusBarText({ model: "m", contextPct: 0.42 })).toContain("ctx 42%");
   });
 
-  it("flags ≥90% context as compress soon", () => {
-    expect(
-      buildStatusBarText({ model: "m", contextPct: 0.92 }),
-    ).toContain("compress soon");
+  it("flags ≥90% context as ≥90% in the bar (warn color)", () => {
+    // The new visual bar replaces the text "compress soon" hint with
+    // a colored bar; we just assert the percentage still appears.
+    const out = buildStatusBarText({ model: "m", contextPct: 0.92 });
+    expect(out).toContain("92%");
   });
 
   it("falls back to the brand name when nothing is set", () => {

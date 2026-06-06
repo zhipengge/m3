@@ -15,6 +15,8 @@ export type StreamAdapterOptions = {
     cacheCreation?: number;
     cumulative: { input: number; output: number; total: number };
   }) => void;
+  onToolUse?: (info: { id: string; name: string; input: unknown }) => void;
+  onToolResult?: (info: { id: string; name: string; isError?: boolean }) => void;
 };
 
 /**
@@ -74,12 +76,22 @@ export class StreamAdapter {
         // Flush any pending text so a tool call never gets prepended to
         // the assistant prose mid-stream.
         await this.flushDeltas();
+        this.options.onToolUse?.({
+          id: event.id,
+          name: event.name,
+          input: event.input,
+        });
         if (this.options.verboseTools) {
           await this.dispatcher.deliver({ text: `(tool: ${event.name})` });
         }
         await this.dispatcher.startTyping?.();
         break;
       case "tool_result":
+        this.options.onToolResult?.({
+          id: event.id,
+          name: event.name,
+          isError: event.isError,
+        });
         if (this.options.verboseTools && event.output) {
           await this.dispatcher.deliver({
             text: `(tool result: ${event.output.slice(0, 200)})`,

@@ -10,9 +10,17 @@ export function mapHarnessEvent(evt: HarnessEvent): AgentStreamEvent[] {
     case "assistant_message":
       return [{ type: "assistant_message", text: evt.text }];
     case "tool_use":
-      return [{ type: "tool_use", name: evt.name, input: evt.input }];
+      return [{ type: "tool_use", id: evt.id, name: evt.name, input: evt.input }];
     case "tool_result":
-      return [{ type: "tool_result", name: evt.name, output: evt.output }];
+      return [
+        {
+          type: "tool_result",
+          id: evt.id,
+          name: evt.name,
+          output: evt.output,
+          isError: evt.isError,
+        },
+      ];
     case "session_id":
       return [{ type: "session_id", sessionId: evt.sessionId }];
     case "lifecycle":

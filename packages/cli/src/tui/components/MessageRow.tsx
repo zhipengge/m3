@@ -36,6 +36,24 @@ function MessageRowImpl(props: Props) {
     );
   }
 
+  if (message.role === "error") {
+    return (
+      <Box marginY={0}>
+        <Text color={theme.err} bold>
+          ✗ {message.text}
+        </Text>
+      </Box>
+    );
+  }
+
+  if (message.role === "activity") {
+    return (
+      <Box marginY={0}>
+        <Text color={theme.muted}>· {message.text}</Text>
+      </Box>
+    );
+  }
+
   if (message.role === "thinking") {
     return (
       <ThinkingBlock
