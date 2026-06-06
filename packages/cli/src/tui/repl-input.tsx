@@ -14,7 +14,7 @@ export type ReplInputProps = {
   paletteIdx: number;
   onPaletteIdxChange: (idx: number) => void;
   pendingPermission: ReplPermissionRequest | null;
-  onResolvePermission: (ok: boolean) => void;
+  onResolvePermission: (decision: "allow" | "deny" | "allow_session") => void;
   disabled?: boolean;
   /**
    * When true, arrow keys / Tab / Esc are routed to the slash palette instead

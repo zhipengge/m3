@@ -3,27 +3,20 @@ import { Box, Text } from "ink";
 import { theme } from "../theme.js";
 import type { ReplPermissionRequest } from "../repl-bridge.js";
 
-/**
- * Inline permission prompt — shown directly under the live thinking /
- * assistant text so the user reads it as a continuation of the model's
- * turn, not a floating modal in the middle of the screen.
- *
- *   ┌ ⚠ Allow tool?  · agent paused, awaiting approval ──────────┐
- *   │   Bash  pnpm test                                           │
- *   │   ▸ [Y] allow     [N] deny                                   │
- *   └──────────────────────────────────────────────────────────────┘
- *   ← →  switch · Enter confirm · Y/N shortcut · Esc deny
- *
- * - Tool name in accent color, the actual command/path in default
- *   color, split on the first ": " from the harness description.
- * - The active option is bracketed with ▸ and rendered bold + accent
- *   color; the inactive option is dim.
- * - Keyboard navigation lives in the parent's useInput handler (so the
- *   choice resets cleanly on prompt change); this component is a
- *   pure renderer.
- */
-export type PermissionChoice = "allow" | "deny";
+export type PermissionChoice = "allow" | "deny" | "allow_session";
 
+/**
+ * Inline permission prompt with three options. Arrow keys
+ * (`←`/`→` / `Tab`/`Shift+Tab`) cycle between the options;
+ * `Enter` confirms the highlighted one. Single-key shortcuts
+ * (`Y` / `N` / `A`) still work for muscle memory.
+ *
+ *   ┌ ⚠ Allow tool?  · agent paused, awaiting approval ───┐
+ *   │   Bash  pnpm test                                    │
+ *   │   ▸ [Y] allow   [A] allow for session   [N] deny    │
+ *   └──────────────────────────────────────────────────────┘
+ *   ← →  switch · Enter confirm · Y/N/A shortcut · Esc deny
+ */
 export const PermissionPrompt = memo(function PermissionPrompt(props: {
   request: ReplPermissionRequest;
   selected: PermissionChoice;
@@ -32,7 +25,6 @@ export const PermissionPrompt = memo(function PermissionPrompt(props: {
   const sep = description.indexOf(": ");
   const headerTool = sep > 0 ? description.slice(0, sep) : toolName;
   const body = sep > 0 ? description.slice(sep + 2) : description;
-  const allowActive = props.selected === "allow";
   return (
     <Box
       flexDirection="column"
@@ -53,17 +45,23 @@ export const PermissionPrompt = memo(function PermissionPrompt(props: {
         </Text>
         <Text wrap="truncate-end">{body}</Text>
       </Box>
-      <Box gap={1} paddingLeft={2} paddingTop={0}>
-        <Text color={allowActive ? theme.accent : theme.muted} bold={allowActive}>
-          {allowActive ? "▸" : " "} [Y] allow
-        </Text>
-        <Text color={!allowActive ? theme.accent : theme.muted} bold={!allowActive}>
-          {!allowActive ? "▸" : " "} [N] deny
-        </Text>
+      <Box gap={2} paddingLeft={2} paddingTop={0}>
+        <PermissionOption active={props.selected === "allow"} label="[Y] allow" />
+        <PermissionOption active={props.selected === "allow_session"} label="[A] allow for session" />
+        <PermissionOption active={props.selected === "deny"} label="[N] deny" />
       </Box>
       <Box paddingLeft={2}>
-        <Text dimColor>← → switch · Enter confirm · Y/N shortcut · Esc deny</Text>
+        <Text dimColor>← → switch · Enter confirm · Y/N/A · Esc deny</Text>
       </Box>
     </Box>
   );
 });
+
+function PermissionOption({ active, label }: { active: boolean; label: string }) {
+  return (
+    <Text color={active ? theme.accent : theme.muted} bold={active}>
+      {active ? "▸ " : "  "}
+      {label}
+    </Text>
+  );
+}

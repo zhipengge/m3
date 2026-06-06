@@ -63,7 +63,15 @@ export function ReplApp(props: ReplAppProps) {
     null,
   );
   /** Which option in the permission prompt is currently highlighted. */
-  const [permissionChoice, setPermissionChoice] = useState<"allow" | "deny">("allow");
+  const [permissionChoice, setPermissionChoice] = useState<
+    "allow" | "deny" | "allow_session"
+  >("allow");
+  /**
+   * Tools the user has chosen to "allow for this session" via the
+   * [A] key — same-name calls in the same session will be approved
+   * silently. Persists in-memory only; cleared on /clear or restart.
+   */
+  const sessionAllowedToolsRef = useRef<Set<string>>(new Set());
   const [paletteIdx, setPaletteIdx] = useState(0);
   const [tokens, setTokens] = useState<{
     input: number;
@@ -117,7 +125,9 @@ export function ReplApp(props: ReplAppProps) {
    *  description without re-creating the sink every render. */
   const currentToolDetailRef = useRef<string | undefined>(undefined);
   currentToolDetailRef.current = currentTool?.detail;
-  const permissionResolveRef = useRef<((ok: boolean) => void) | null>(null);
+  const permissionResolveRef = useRef<
+    ((decision: "allow" | "deny" | "allow_session") => void) | null
+  >(null);
   const onSubmitRef = useRef(props.onSubmit);
   onSubmitRef.current = props.onSubmit;
 
@@ -299,8 +309,15 @@ export function ReplApp(props: ReplAppProps) {
       requestPermission(req: ReplPermissionRequest) {
         streamBufferRef.current.flushNow();
         setLoading(false);
-        return new Promise<boolean>((resolve) => {
-          permissionResolveRef.current = resolve;
+        // Short-circuit if the user previously chose "allow for this
+        // session" for this tool name. Cheap O(1) lookup; the set is
+        // bounded by the number of distinct tool names used in a
+        // session, which is small.
+        if (sessionAllowedToolsRef.current.has(req.toolName)) {
+          return Promise.resolve("allow" as const);
+        }
+        return new Promise<"allow" | "deny" | "allow_session">((resolve) => {
+          permissionResolveRef.current = (decision) => resolve(decision);
           setPendingPermission(req);
         });
       },
@@ -439,13 +456,17 @@ export function ReplApp(props: ReplAppProps) {
     if (value === "/") setPaletteIdx(0);
   }, []);
 
-  const resolvePermission = useCallback((ok: boolean) => {
-    permissionResolveRef.current?.(ok);
+  const resolvePermission = useCallback((decision: "allow" | "deny" | "allow_session") => {
+    permissionResolveRef.current?.(decision);
     permissionResolveRef.current = null;
     setPendingPermission(null);
     setPermissionChoice("allow"); // reset for the next prompt
-    if (ok) setLoading(true);
-  }, []);
+    if (decision === "allow_session" && pendingPermission) {
+      // Persist in-memory only; cleared on /clear or restart.
+      sessionAllowedToolsRef.current.add(pendingPermission.toolName);
+    }
+    if (decision === "allow" || decision === "allow_session") setLoading(true);
+  }, [pendingPermission]);
 
   // Reset the choice to "allow" whenever a new prompt arrives, so a stale
   // selection from a previous prompt doesn't carry over.
@@ -455,34 +476,41 @@ export function ReplApp(props: ReplAppProps) {
 
   useInput(
     (_char, key) => {
-      // Permission prompt navigation: ←/→ (and Tab/Shift+Tab) cycle between
-      // [Y] allow and [N] deny, Enter confirms the highlighted one, and
-      // Y/N / Esc still work as single-key shortcuts. Lives in the parent
-      // useInput rather than inside <PermissionPrompt> so the choice state
-      // is reset cleanly on prompt change.
+      // Permission prompt navigation: ←/→ (and Tab/Shift+Tab) cycle
+      // through the 3 options (allow / allow_session / deny), Enter
+      // confirms the highlighted one, and Y/N/A / Esc still work as
+      // single-key shortcuts. Lives in the parent useInput rather
+      // than inside <PermissionPrompt> so the choice state is reset
+      // cleanly on prompt change.
       if (pendingPermission) {
+        const opts = ["allow", "allow_session", "deny"] as const;
+        const idx = opts.indexOf(permissionChoice);
         if (key.leftArrow || (key.tab && key.shift)) {
-          setPermissionChoice("allow");
+          setPermissionChoice(opts[(idx - 1 + opts.length) % opts.length]!);
           return;
         }
         if (key.rightArrow || (key.tab && !key.shift)) {
-          setPermissionChoice("deny");
+          setPermissionChoice(opts[(idx + 1) % opts.length]!);
           return;
         }
         if (key.return) {
-          resolvePermission(permissionChoice === "allow");
+          resolvePermission(permissionChoice);
           return;
         }
         if (_char === "y" || _char === "Y") {
-          resolvePermission(true);
+          resolvePermission("allow");
           return;
         }
         if (_char === "n" || _char === "N") {
-          resolvePermission(false);
+          resolvePermission("deny");
+          return;
+        }
+        if (_char === "a" || _char === "A") {
+          resolvePermission("allow_session");
           return;
         }
         if (key.escape) {
-          resolvePermission(false);
+          resolvePermission("deny");
           return;
         }
         // Eat everything else while a permission is pending so accidental

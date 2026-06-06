@@ -3,6 +3,8 @@ export type ReplPermissionRequest = {
   description: string;
 };
 
+export type ReplPermissionDecision = "allow" | "deny" | "allow_session";
+
 /** Per-turn + cumulative token usage from the LLM provider. */
 export type ReplTokenUsage = {
   /** This turn's input / output / total. */
@@ -24,7 +26,7 @@ export type ReplUiSink = {
   onDeliver: (text: string) => void;
   onSystem: (text: string) => void;
   /** Interactive tool approval (Ink); resolves when user presses y/n. */
-  requestPermission?: (req: ReplPermissionRequest) => Promise<boolean>;
+  requestPermission?: (req: ReplPermissionRequest) => Promise<ReplPermissionDecision>;
   /** Per-turn token usage; cumulative is the running session total. */
   onTokens?: (usage: ReplTokenUsage) => void;
   /** Tool invocation just started — surface a "▸ Read foo.ts" line and
