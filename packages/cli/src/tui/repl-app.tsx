@@ -6,6 +6,7 @@ import type { InboundMessage } from "@m3/channels";
 import { describeToolCall } from "@m3/agent";
 import { ActivityFooter, type RecentTool } from "./components/ActivityFooter.js";
 import { BreathingSpinner } from "./components/BreathingSpinner.js";
+import { CodeDiff } from "./components/CodeDiff.js";
 import type { ChatLine } from "./components/message-types.js";
 import { MessageRow } from "./components/MessageRow.js";
 import { PermissionPrompt } from "./components/PermissionPrompt.js";
@@ -83,6 +84,15 @@ export function ReplApp(props: ReplAppProps) {
    */
   const [currentTool, setCurrentTool] = useState<RecentTool | undefined>(undefined);
   const [recentTools, setRecentTools] = useState<RecentTool[]>([]);
+  /**
+   * Edit / Write tool calls surface a tiny inline diff above the
+   * spinner. Capped to one visible diff at a time (the latest) so
+   * the live region doesn't grow unbounded during long refactors.
+   */
+  const [pendingDiff, setPendingDiff] = useState<
+    | { filePath?: string; oldString?: string; newString: string }
+    | null
+  >(null);
   const [turnCount, setTurnCount] = useState(0);
   /** Per-call startedAt timestamp, captured when tool_use fires so we
    *  can compute durationMs in tool_result. */
@@ -238,6 +248,20 @@ export function ReplApp(props: ReplAppProps) {
         toolStartRef.current.set(info.id, Date.now());
         toolCountRef.current += 1;
         setCurrentTool({ name: info.name, detail, running: true });
+        // Surface Edit/Write changes as a tiny inline diff. Capped
+        // content size (we read the input from the harness directly,
+        // not the file, so the cost is bounded by the model output).
+        const inp = info.input as Record<string, unknown> | undefined;
+        if (info.name === "Edit" && inp) {
+          const oldString = typeof inp.old_string === "string" ? inp.old_string : "";
+          const newString = typeof inp.new_string === "string" ? inp.new_string : "";
+          const filePath = typeof inp.file_path === "string" ? inp.file_path : undefined;
+          setPendingDiff({ filePath, oldString, newString });
+        } else if (info.name === "Write" && inp) {
+          const newString = typeof inp.content === "string" ? inp.content : "";
+          const filePath = typeof inp.file_path === "string" ? inp.file_path : undefined;
+          setPendingDiff({ filePath, oldString: "", newString });
+        }
         forceTick((n) => n + 1); // refresh status bar so "N tools" updates
       },
       onToolResult(info: { id: string; name: string; isError?: boolean }) {
@@ -253,6 +277,9 @@ export function ReplApp(props: ReplAppProps) {
         };
         setRecentTools((prev) => [tool, ...prev].slice(0, RECENT_TOOLS_MAX));
         setCurrentTool(undefined);
+        // Clear the diff when the tool finishes — the user has seen
+        // it, and the next tool call (or a new prompt) will replace it.
+        setPendingDiff(null);
       },
       requestPermission(req: ReplPermissionRequest) {
         streamBufferRef.current.flushNow();
@@ -523,6 +550,14 @@ export function ReplApp(props: ReplAppProps) {
 
         {pendingPermission ? (
           <PermissionPrompt request={pendingPermission} selected={permissionChoice} />
+        ) : null}
+
+        {pendingDiff ? (
+          <CodeDiff
+            filePath={pendingDiff.filePath}
+            oldString={pendingDiff.oldString}
+            newString={pendingDiff.newString}
+          />
         ) : null}
 
         <ActivityFooter current={currentTool} recent={recentTools} turns={turnCount} />
