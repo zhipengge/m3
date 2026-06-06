@@ -13,6 +13,7 @@ import { PermissionPrompt } from "./components/PermissionPrompt.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { ReplInput } from "./repl-input.js";
 import { isSlashPaletteActive } from "./repl-palette.js";
+import { createHistoryStore, type HistoryStore } from "./repl-history.js";
 import { setReplUiSink, type ReplPermissionRequest, type ReplUiSink } from "./repl-bridge.js";
 import {
   getThinkingExpanded,
@@ -113,6 +114,14 @@ export function ReplApp(props: ReplAppProps) {
   const sessionStartRef = useRef<number>(Date.now());
   /** Total tool invocations this session (visible in the status bar). */
   const toolCountRef = useRef<number>(0);
+  /** Persistent command history (saved to ~/.m3/repl_history). */
+  const historyRef = useRef<HistoryStore | null>(null);
+  if (historyRef.current === null) historyRef.current = createHistoryStore();
+  /** When the user starts arrow-recalling, the live input is saved
+   *  here and restored when they leave history mode. */
+  const draftRef = useRef<string>("");
+  /** Current position in the history; -1 means "not in history". */
+  const historyIdxRef = useRef<number>(-1);
   const [, forceTick] = useState(0);
   // Refresh the duration gauge every 30 seconds. Cheap and rare enough
   // not to interfere with the streaming/spinner cadences.
@@ -407,6 +416,10 @@ export function ReplApp(props: ReplAppProps) {
         // Reset cumulative token usage on session reset.
         setTokens(null);
       }
+      // Persist the submitted line to history before any UI mutation.
+      historyRef.current?.push(normalized);
+      historyIdxRef.current = -1;
+      draftRef.current = "";
       appendUserMessage(normalized);
       setLoading(true);
       setLiveThinking(null);
@@ -519,6 +532,47 @@ export function ReplApp(props: ReplAppProps) {
       }
       if (key.ctrl && _char === "o") {
         toggleThinkingExpanded();
+        return;
+      }
+      // Up/Down arrow recall through the persistent history. We
+      // intercept only when the palette is not active (the palette
+      // uses Up/Down for its own navigation) and there's no
+      // permission pending (eat-all mode).
+      if (key.upArrow && !paletteActive) {
+        const store = historyRef.current!;
+        if (historyIdxRef.current === -1) {
+          draftRef.current = input;
+          historyIdxRef.current = store.recent(1000).length;
+        }
+        if (historyIdxRef.current > 0) {
+          historyIdxRef.current -= 1;
+          const items = store.recent(1000);
+          const line = items[items.length - 1 - historyIdxRef.current];
+          if (line !== undefined) {
+            setInput(line);
+            setPaletteIdx(0);
+          }
+        }
+        return;
+      }
+      if (key.downArrow && !paletteActive) {
+        if (historyIdxRef.current === -1) return;
+        const store = historyRef.current!;
+        const total = store.recent(1000).length;
+        if (historyIdxRef.current < total - 1) {
+          historyIdxRef.current += 1;
+          const items = store.recent(1000);
+          const line = items[items.length - 1 - historyIdxRef.current];
+          if (line !== undefined) {
+            setInput(line);
+            setPaletteIdx(0);
+          }
+        } else {
+          // Past the most recent — restore the live draft.
+          historyIdxRef.current = -1;
+          setInput(draftRef.current);
+          setPaletteIdx(0);
+        }
         return;
       }
       if (key.ctrl && (_char === "v" || _char === "V")) {

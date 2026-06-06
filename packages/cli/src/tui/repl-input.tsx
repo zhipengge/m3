@@ -96,6 +96,13 @@ function ReplInputImpl(props: ReplInputProps) {
   // disabled the TextInput's own useInput, dropping all character keys.
   useInput(
     (_char, key) => {
+      // Backslash-Enter (`\` then Enter) is a multi-line continuation:
+      // we append a newline to the input rather than submitting, so the
+      // user can paste a 20-line code block with explicit line breaks.
+      if (key.return && input.endsWith("\\")) {
+        onInputChange(`${input}\n`);
+        return;
+      }
       if (paletteSpecs.length === 0) return;
       if (key.upArrow) {
         onPaletteIdxChange(paletteIdx <= 0 ? paletteSpecs.length - 1 : paletteIdx - 1);
