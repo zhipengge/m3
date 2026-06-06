@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { Box, Text } from "ink";
+import { MarkdownBlock } from "../render-markdown.js";
 import { ThinkingBlock } from "./ThinkingBlock.js";
 import { theme } from "../theme.js";
 import type { ChatLine } from "./message-types.js";
@@ -24,6 +25,11 @@ type Props = {
  *   ∙    (tool: Bash)
  *   ∴    Thinking…
  *   ⚠    Allow tool?   (only the permission prompt gets a border)
+ *
+ * Assistant / system rows use the MarkdownBlock renderer so model
+ * output gets **bold**, `inline code`, code-fence syntax highlight,
+ * # headers, - bullets etc. The user / activity / error roles
+ * stay plain because they're typically short.
  */
 function MessageRowImpl(props: Props) {
   const { message, thinkingExpanded = false } = props;
@@ -78,11 +84,12 @@ function MessageRowImpl(props: Props) {
     );
   }
 
-  // assistant — show the live region. Truncate to DISPLAY_CAP so the wrap
-  // algorithm doesn't re-process the full accumulated text on every spinner
-  // tick; the full text is still in app state and is delivered on stop.
+  // assistant — markdown rendering for the streamed text. The wrap
+  // algorithm inside MarkdownBlock respects DISPLAY_CAP, so the cost
+  // is bounded even if the full response is much longer.
   const hidden = Math.max(0, message.text.length - DISPLAY_CAP);
-  const display = hidden > 0 ? "…" + message.text.slice(-DISPLAY_CAP) : message.text;
+  const display =
+    hidden > 0 ? "…" + message.text.slice(-DISPLAY_CAP) : message.text;
 
   return (
     <Box flexDirection="column" marginY={0}>
@@ -93,10 +100,8 @@ function MessageRowImpl(props: Props) {
         <Text color={theme.muted}>›</Text>
       </Box>
       <Box paddingLeft={3}>
-        <Text wrap="truncate-end">
-          {display}
-          {message.streaming ? <Text color={theme.accent}>▌</Text> : null}
-        </Text>
+        <MarkdownBlock text={display} />
+        {message.streaming ? <Text color={theme.accent}>▌</Text> : null}
       </Box>
     </Box>
   );
