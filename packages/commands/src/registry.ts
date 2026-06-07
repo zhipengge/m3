@@ -27,6 +27,7 @@ export type CommandResult =
   | { action: "compact_session"; focus?: string }
   | { action: "set_goal"; condition: string }
   | { action: "set_model"; model: string }
+  | { action: "list_mcp_servers" }
   | { action: "passthrough" };
 
 export type CommandHandler = (args: string, ctx: CommandContext) => CommandResult;
@@ -182,14 +183,13 @@ const BUILTIN_COMMANDS: Record<string, CommandHandler> = {
 
 /** Phase 2: extended CC slash command registry. */
 const PHASE2_COMMANDS: Record<string, CommandHandler> = {
-  mcp: (_args, ctx) => ({
-    action: "reply_only",
-    text: [
-      "MCP tools load via agent.mcp in ~/.m3/m3.json",
-      `config: ${ctx.config.agent.mcp?.config ?? "(not set)"}`,
-      `prefix: ${ctx.config.agent.mcp?.toolPrefix ?? "mcp__"}`,
-      "See examples/mcp.json for Claude Desktop-compatible mcpServers shape.",
-    ].join("\n"),
+  mcp: () => ({
+    // B8: the bridge layer intercepts this and replaces the reply
+    // with a real listing from listServers() + listAllMcpTools().
+    // We can't call those directly here because @m3/commands must
+    // not depend on @m3/agent (the bridge is the only place that
+    // bridges them).
+    action: "list_mcp_servers",
   }),
   skills: () => ({ action: "reply_only", text: "Skills: configure via agent.skills.dirs" }),
   agents: () => ({ action: "reply_only", text: "Sub-agents enabled via agent.subAgents" }),

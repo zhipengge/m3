@@ -254,6 +254,40 @@ export class MessagePipeline {
         }
         return;
       }
+      if (cmdResult && cmdResult.action === "list_mcp_servers") {
+        // B8: pull the real listing from the MCP pool and ship it
+        // back to the channel. We can't pull this from
+        // @m3/commands because commands must stay decoupled from
+        // agent — the bridge is the only place that knows about
+        // both.
+        try {
+          const { listServers, listAllMcpTools } = await import("@m3/agent");
+          const servers = listServers();
+          if (servers.length === 0) {
+            await dispatcher.deliver({
+              text: `No MCP servers connected.\nConfig: ${this.options.config.agent.mcp?.config ?? "(not set)"}\nPrefix: ${this.options.config.agent.mcp?.toolPrefix ?? "mcp__"}`,
+            });
+          } else {
+            const tools = await listAllMcpTools(servers);
+            const byServer = new Map<string, number>();
+            for (const t of tools) {
+              byServer.set(t.serverId, (byServer.get(t.serverId) ?? 0) + 1);
+            }
+            const rows = servers.map((s) => {
+              const count = byServer.get(s.id) ?? 0;
+              return `  ${s.id}\t${count} tool${count === 1 ? "" : "s"}`;
+            });
+            await dispatcher.deliver({
+              text: `MCP servers (${servers.length}):\n${rows.join("\n")}\n\nConfig: ${this.options.config.agent.mcp?.config ?? "(not set)"}\nPrefix: ${this.options.config.agent.mcp?.toolPrefix ?? "mcp__"}`,
+            });
+          }
+        } catch (err) {
+          await dispatcher.deliver({
+            text: `MCP listing failed: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+        return;
+      }
       if (cmdResult && isCompactSessionCommand(cmdResult)) {
         if (!mapping?.claudeSessionId || priorMessages.length === 0) {
           await dispatcher.deliver({ text: "No conversation history to compact yet." });

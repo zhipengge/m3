@@ -9,6 +9,15 @@ export type McpConnectedServer = {
   close: () => Promise<void>;
 };
 
+/** Module-level registry of currently connected servers. Populated by
+ *  connectMcpServer and cleared by close(). Exposed via listServers()
+ *  for /mcp command listing and dashboard surfaces. */
+const serverRegistry = new Map<string, McpConnectedServer>();
+
+export function listServers(): McpConnectedServer[] {
+  return [...serverRegistry.values()];
+}
+
 function inferTransportType(entry: McpServerEntry): "stdio" | "sse" {
   if (entry.type === "sse" || entry.type === "http") return "sse";
   if (entry.url) return "sse";
@@ -19,19 +28,33 @@ export async function connectMcpServer(id: string, entry: McpServerEntry): Promi
   const client = new Client({ name: "m3-agent", version: "0.2.0" });
   const kind = inferTransportType(entry);
 
+  // Register eagerly so a connection failure is visible to /mcp.
+  // The actual close() removes it.
+  const placeholder: McpConnectedServer = {
+    id,
+    client,
+    close: async () => {
+      serverRegistry.delete(id);
+    },
+  };
+  serverRegistry.set(id, placeholder);
+
   if (kind === "sse") {
     if (!entry.url) throw new Error(`MCP server "${id}": url required for remote transport`);
     const transport = new SSEClientTransport(new URL(entry.url), {
       requestInit: entry.headers ? { headers: entry.headers } : undefined,
     });
     await client.connect(transport);
-    return {
+    const real: McpConnectedServer = {
       id,
       client,
       close: async () => {
         await client.close();
+        serverRegistry.delete(id);
       },
     };
+    serverRegistry.set(id, real);
+    return real;
   }
 
   if (!entry.command) {
@@ -63,13 +86,18 @@ export async function connectMcpServer(id: string, entry: McpServerEntry): Promi
     stderr: "ignore",
   });
   await client.connect(transport);
-  return {
+  // Replace the placeholder with the real one whose close() closes
+  // the underlying client AND removes the registry entry.
+  const real: McpConnectedServer = {
     id,
     client,
     close: async () => {
       await client.close();
+      serverRegistry.delete(id);
     },
   };
+  serverRegistry.set(id, real);
+  return real;
 }
 
 export async function listAllMcpTools(servers: McpConnectedServer[]) {
