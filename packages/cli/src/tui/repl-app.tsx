@@ -56,6 +56,22 @@ function nextId(): string {
   return `m-${msgCounter}`;
 }
 
+/**
+ * Find the most recent history line whose lowercase form contains
+ * `query` (case-insensitive substring). Returns null when nothing
+ * matches. Used by the reverse-i-search overlay (Ctrl+R) — successive
+ * presses cycle to older matches because the *first* match is the
+ * most recent, and Ctrl+R walks the array backward each time.
+ */
+export function findReverseISearchMatch(history: string[], query: string): string | null {
+  if (!query) return null;
+  const q = query.toLowerCase();
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i]!.toLowerCase().includes(q)) return history[i]!;
+  }
+  return null;
+}
+
 export function ReplApp(props: ReplAppProps) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -148,6 +164,17 @@ export function ReplApp(props: ReplAppProps) {
   const draftRef = useRef<string>("");
   /** Current position in the history; -1 means "not in history". */
   const historyIdxRef = useRef<number>(-1);
+  /**
+   * Reverse-i-search state (Ctrl+R). `null` means the search
+   * overlay is closed. While non-null, the input field is hidden
+   * and the user types a substring; we find the most recent
+   * matching history entry and show it. Enter commits; Esc
+   * restores the original input and closes.
+   */
+  const [reverseSearch, setReverseSearch] = useState<{
+    query: string;
+    match: string | null;
+  } | null>(null);
   const [, forceTick] = useState(0);
   // Refresh the duration gauge every 30 seconds. Cheap and rare enough
   // not to interfere with the streaming/spinner cadences.
@@ -372,7 +399,6 @@ export function ReplApp(props: ReplAppProps) {
           input: cumulative.input,
           output: cumulative.output,
           total: cumulative.total,
-          ...(cumulative.costUsd !== undefined ? { costUsd: cumulative.costUsd } : {}),
           ...(usage.cacheRead !== undefined ? { cacheRead: usage.cacheRead } : {}),
           ...(usage.cacheCreation !== undefined
             ? { cacheCreation: usage.cacheCreation }
@@ -590,11 +616,70 @@ export function ReplApp(props: ReplAppProps) {
         toggleThinkingExpanded();
         return;
       }
+      // Ctrl+L — clear screen, like in bash. ANSI escape: \x1b[2J
+      // erases the visible viewport, \x1b[H moves the cursor home.
+      // Ink re-renders on the next tick, so the message list re-flows
+      // into the now-empty viewport. The transcript in `completed`
+      // is untouched — the user can still scroll up.
+      if (key.ctrl && _char === "l") {
+        process.stdout.write("\x1b[2J\x1b[H");
+        return;
+      }
+      // Ctrl+R — reverse-i-search. Saves the current input as the
+      // draft, opens a search overlay. Each subsequent Ctrl+R cycles
+      // to the *next* older match. Enter commits, Esc restores.
+      if (key.ctrl && _char === "r") {
+        if (!reverseSearch) {
+          draftRef.current = input;
+        }
+        const store = historyRef.current!;
+        const items = store.recent(1000);
+        const prev = reverseSearch?.query ?? "";
+        const next = findReverseISearchMatch(items, prev);
+        setReverseSearch({ query: prev, match: next });
+        if (next !== null) setInput(next);
+        return;
+      }
       // Ctrl+T toggles the split view (file viewer on the left,
       // chat on the right). Single-pane by default — opt-in, like
       // Vim splits — so a user who never asks for it isn't surprised.
       if (key.ctrl && _char === "t") {
         setSplitView((v) => !v);
+        return;
+      }
+      // While the reverse-i-search overlay is open, the input is
+      // routed there instead of the live input. Printable keys
+      // extend the query, Enter commits, Esc restores the draft.
+      if (reverseSearch) {
+        if (key.return) {
+          // Commit: keep the matched value in `input`, drop the overlay.
+          setReverseSearch(null);
+          return;
+        }
+        if (key.escape) {
+          // Cancel: restore the pre-search draft.
+          setInput(draftRef.current);
+          setReverseSearch(null);
+          return;
+        }
+        if (key.backspace || key.delete) {
+          const q = reverseSearch.query.slice(0, -1);
+          const store = historyRef.current!;
+          const next = findReverseISearchMatch(store.recent(1000), q);
+          setReverseSearch({ query: q, match: next });
+          if (next !== null) setInput(next);
+          return;
+        }
+        if (_char && _char.length === 1) {
+          const q = reverseSearch.query + _char;
+          const store = historyRef.current!;
+          const next = findReverseISearchMatch(store.recent(1000), q);
+          setReverseSearch({ query: q, match: next });
+          if (next !== null) setInput(next);
+          return;
+        }
+        // Eat everything else (arrows, ctrl-chords, …) so they don't
+        // leak through to the ReplInput below.
         return;
       }
       // Up/Down arrow recall through the persistent history. We
@@ -744,18 +829,38 @@ export function ReplApp(props: ReplAppProps) {
         </Box>
       ) : null}
 
-      <ReplInput
-        input={input}
-        onInputChange={handleInputChange}
-        onSubmitLine={submitLine}
-        slashNames={slashNames}
-        paletteIdx={paletteIdx}
-        onPaletteIdxChange={setPaletteIdx}
-        pendingPermission={pendingPermission}
-        onResolvePermission={resolvePermission}
-        disabled={inputDisabled}
-        paletteActive={paletteActive}
-      />
+      {reverseSearch ? (
+        <Box
+          borderStyle="round"
+          borderColor={theme.accent}
+          paddingX={1}
+          flexDirection="row"
+          gap={1}
+        >
+          <Text color={theme.accent} bold>
+            (reverse-i-search)
+          </Text>
+          <Text color={theme.muted}>{`\``}</Text>
+          <Text color={theme.assistant}>{reverseSearch.query}</Text>
+          <Text color={theme.muted}>{`\`:  `}</Text>
+          <Text>
+            {reverseSearch.match ?? <Text dimColor>(no match — Enter to keep, Esc to cancel)</Text>}
+          </Text>
+        </Box>
+      ) : (
+        <ReplInput
+          input={input}
+          onInputChange={handleInputChange}
+          onSubmitLine={submitLine}
+          slashNames={slashNames}
+          paletteIdx={paletteIdx}
+          onPaletteIdxChange={setPaletteIdx}
+          pendingPermission={pendingPermission}
+          onResolvePermission={resolvePermission}
+          disabled={inputDisabled}
+          paletteActive={paletteActive}
+        />
+      )}
       <StatusBar
         model={props.modelLabel}
         dashboardUrl={props.dashboardUrl}
