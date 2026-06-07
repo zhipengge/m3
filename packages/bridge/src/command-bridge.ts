@@ -62,6 +62,12 @@ export function isClearUndoCommand(
   return result.action === "clear_undo";
 }
 
+export function isMemoryCommand(
+  result: CommandResult,
+): result is Extract<CommandResult, { action: "memory" }> {
+  return result.action === "memory";
+}
+
 export function isCompactSessionCommand(result: CommandResult): boolean {
   return result.action === "compact_session";
 }

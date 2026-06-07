@@ -29,6 +29,7 @@ import {
   isClearSessionCommand,
   isClearUndoCommand,
   isCompactSessionCommand,
+  isMemoryCommand,
   isReplyOnlyCommand,
 } from "./command-bridge.js";
 import { agentConfigForChannel } from "./channel-permissions.js";
@@ -291,6 +292,56 @@ export class MessagePipeline {
           });
         } else {
           await dispatcher.deliver({ text: "No active session to restore." });
+        }
+        return;
+      }
+      if (cmdResult && isMemoryCommand(cmdResult)) {
+        // C3 part 2: real /memory handler. Reads, appends, or
+        // searches the cross-session memory store. We import
+        // lazily so the dep edge stays one-way (commands → agent
+        // via the bridge).
+        try {
+          const { MemoryStore } = await import("@m3/agent");
+          const path = await import("node:path");
+          const project = path.basename(this.options.config.agent.cwd ?? process.cwd());
+          const store = new MemoryStore();
+          if (cmdResult.subcommand === "append") {
+            if (!cmdResult.argument.trim()) {
+              await dispatcher.deliver({
+                text: "Usage: /memory append <note>",
+              });
+              return;
+            }
+            store.append(project, cmdResult.argument);
+            await dispatcher.deliver({
+              text: `Appended to ~/.m3/memory/${project}.md`,
+            });
+          } else if (cmdResult.subcommand === "search") {
+            if (!cmdResult.argument.trim()) {
+              await dispatcher.deliver({
+                text: "Usage: /memory search <query>",
+              });
+              return;
+            }
+            const hits = store.search(project, cmdResult.argument);
+            if (hits.length === 0) {
+              await dispatcher.deliver({ text: "no matches" });
+            } else {
+              await dispatcher.deliver({
+                text: `${hits.length} match(es):\n${hits.join("\n---\n")}`,
+              });
+            }
+          } else {
+            // read
+            const content = store.readAll(project);
+            await dispatcher.deliver({
+              text: content || `(no memory notes for project ${project})`,
+            });
+          }
+        } catch (err) {
+          await dispatcher.deliver({
+            text: `Memory: ${err instanceof Error ? err.message : String(err)}`,
+          });
         }
         return;
       }

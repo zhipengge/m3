@@ -1,9 +1,12 @@
+import path from "node:path";
 import type { AgentConfig } from "@m3/config";
 import type { ToolDefinition } from "../harness/types.js";
 import { loadSkills } from "../skills/loader.js";
 import { buildSkillTool, buildSkillsSystemPrompt } from "../skills/skill-tool.js";
 import { mcpToolProvider } from "../mcp/provider.js";
 import { getTools as getBuiltinTools } from "./registry.js";
+import { MemoryStore } from "../session/memory-store.js";
+import { buildMemoryTool } from "./memory-tool.js";
 
 /**
  * A ToolProvider contributes tools (and optionally system-prompt text) to the
@@ -42,6 +45,29 @@ const skillsProvider: ToolProvider = {
     return {
       tools: [buildSkillTool(skills)],
       systemPrompt: buildSkillsSystemPrompt(skills),
+    };
+  },
+};
+
+/**
+ * C3 part 2: a memory tool + memory system-prompt fragment. The
+ * store is shared across all sessions for the same cwd basename;
+ * the system-prompt fragment injects the project's notes so the
+ * LLM can see what previous sessions thought without an extra
+ * tool call.
+ */
+const memoryProvider: ToolProvider = {
+  id: "memory",
+  provide: async () => {
+    const store = new MemoryStore();
+    const project = path.basename(process.cwd());
+    const notes = store.readAll(project);
+    const systemPrompt = notes
+      ? `\n## Cross-session memory (project: ${project})\n\n${notes}\n`
+      : "";
+    return {
+      tools: [buildMemoryTool(store, project)],
+      systemPrompt,
     };
   },
 };
@@ -100,7 +126,7 @@ export function applyToolAllowlist(
  * earlier providers winning so core tools can't be shadowed.
  */
 export async function collectTools(config: AgentConfig): Promise<CollectedTools> {
-  const providers = [builtinProvider, skillsProvider, ...externalProviders];
+  const providers = [builtinProvider, skillsProvider, memoryProvider, ...externalProviders];
   const tools: ToolDefinition[] = [];
   const prompts: string[] = [];
 

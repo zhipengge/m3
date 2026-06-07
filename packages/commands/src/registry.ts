@@ -29,6 +29,12 @@ export type CommandResult =
   | { action: "set_model"; model: string }
   | { action: "set_permission_mode"; mode: "default" | "acceptEdits" | "plan" | "bypassPermissions" }
   | { action: "list_mcp_servers" }
+  | {
+      action: "memory";
+      subcommand: "read" | "append" | "search";
+      argument: string;
+      sessionKey: string;
+    }
   | { action: "passthrough" };
 
 export type CommandHandler = (args: string, ctx: CommandContext) => CommandResult;
@@ -208,7 +214,26 @@ const PHASE2_COMMANDS: Record<string, CommandHandler> = {
   skills: () => ({ action: "reply_only", text: "Skills: configure via agent.skills.dirs" }),
   agents: () => ({ action: "reply_only", text: "Sub-agents enabled via agent.subAgents" }),
   hooks: () => ({ action: "reply_only", text: "Hooks: configure via hooks in m3.json" }),
-  memory: () => ({ action: "reply_only", text: "Memory: uses CLAUDE.md / project memory files" }),
+  memory: (args, ctx) => {
+    // C3 part 2: real handler that reads / appends / searches
+    // the cross-session memory store. Without args → read all
+    // notes. \`append <note>\` writes. \`search <query>\` greps.
+    // The actual store lives in @m3/agent; the bridge layer
+    // imports it lazily so commands stays decoupled.
+    const parts = args.trim().match(/^(\S+)\s*(.*)$/);
+    const subRaw = parts?.[1]?.toLowerCase() ?? "read";
+    const sub: "read" | "append" | "search" =
+      subRaw === "append" || subRaw === "search" || subRaw === "read"
+        ? subRaw
+        : "read";
+    const rest = parts?.[2] ?? "";
+    return {
+      action: "memory",
+      subcommand: sub,
+      argument: rest,
+      sessionKey: ctx.sessionKey,
+    };
+  },
   review: () => ({
     action: "inject_prompt",
     prompt: "Review the recent code changes and provide feedback.",
