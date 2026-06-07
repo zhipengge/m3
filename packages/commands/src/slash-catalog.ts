@@ -102,6 +102,54 @@ export function getSlashCommandSpecs(extraNames: string[] = []): SlashCommandSpe
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/**
+ * Fuzzy-match score: a higher number means a better match. Returns
+ * `null` when `query` characters can't be found as an ordered
+ * subsequence of `name` (case-insensitive).
+ *
+ * The scoring rewards:
+ *   - Exact match (e.g. "/clear" → /clear, +100)
+ *   - Prefix match (e.g. "/cl" → /clear, /clear-undo, +30)
+ *   - Consecutive character runs (typing `/mp` should beat `/mop`
+ *     for the same target because the matched chars are adjacent)
+ *   - A name boundary at the start of the match (word-start bonus:
+ *     a match starting at index 0 or right after `-`/`_` is more
+ *     likely to be what the user typed than a match in the middle)
+ *
+ * This is intentionally simple — we don't need a full Smith-Waterman
+ * here, the spec list is small and the user is typing 1-3 chars at a
+ * time. Returns null on no match so callers can use the result for
+ * sort key + filter in one pass.
+ */
+export function fuzzyScore(name: string, query: string): number | null {
+  if (!query) return 1; // empty query matches everything, base score
+  const n = name.toLowerCase();
+  const q = query.toLowerCase();
+  let qi = 0;
+  let score = 0;
+  let prevMatchAt = -2;
+  for (let i = 0; i < n.length && qi < q.length; i++) {
+    if (n[i] === q[qi]) {
+      // Word-start bonus: matching at the very beginning of the
+      // name OR right after a separator is the strongest signal.
+      const atWordStart = i === 0 || n[i - 1] === "-" || n[i - 1] === "_";
+      if (atWordStart) score += 20;
+      // Consecutive-run bonus: adjacent matched chars beat
+      // scattered ones. The bonus is multiplicative on the word-
+      // start bonus so a "perfect" prefix still wins over a
+      // mid-string scattered match.
+      if (i === prevMatchAt + 1) score += 15;
+      prevMatchAt = i;
+      qi++;
+    }
+  }
+  if (qi < q.length) return null; // not all query chars consumed
+  // Exact-match bonus: query is the full name (or a prefix of it).
+  if (n === q) score += 100;
+  else if (n.startsWith(q)) score += 30;
+  return score;
+}
+
 /** Tab-completion candidates for a REPL line starting with /. */
 export function completeSlashLine(line: string, extraNames: string[] = []): string[] {
   const trimmed = line.trimStart();
@@ -111,15 +159,19 @@ export function completeSlashLine(line: string, extraNames: string[] = []): stri
   const specs = getSlashCommandSpecs(extraNames);
 
   return specs
-    .filter((s) => !partial || s.name.startsWith(partial))
-    .map((s) => `/${s.name}`);
+    .map((s) => ({ name: s.name, score: fuzzyScore(s.name, partial) ?? -1 }))
+    .filter((x) => x.score >= 0)
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+    .map((x) => `/${x.name}`);
 }
 
 export function formatSlashCommandMenu(filter = "", extraNames: string[] = []): string {
   const partial = filter.replace(/^\//, "").toLowerCase();
-  const specs = getSlashCommandSpecs(extraNames).filter(
-    (s) => !partial || s.name.startsWith(partial),
-  );
+  const specs = getSlashCommandSpecs(extraNames)
+    .map((s) => ({ spec: s, score: fuzzyScore(s.name, partial) ?? -1 }))
+    .filter((x) => x.score >= 0)
+    .sort((a, b) => b.score - a.score || a.spec.name.localeCompare(b.spec.name))
+    .map((x) => x.spec);
 
   const nameWidth = Math.max(8, ...specs.map((s) => s.name.length + 1));
   const lines = ["Slash commands (Tab to complete, /help for details):", ""];

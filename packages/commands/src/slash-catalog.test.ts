@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   completeSlashLine,
   formatSlashCommandMenu,
+  fuzzyScore,
   getSlashCommandSpecs,
   groupSlashCommandsByCategory,
   SLASH_CATEGORY_ORDER,
@@ -9,11 +10,50 @@ import {
   type SlashCategory,
 } from "./slash-catalog.js";
 
+describe("fuzzyScore", () => {
+  it("returns null when query is not a subsequence of name", () => {
+    expect(fuzzyScore("clear", "xyz")).toBeNull();
+  });
+
+  it("returns 1 for empty query (matches everything)", () => {
+    expect(fuzzyScore("clear", "")).toBe(1);
+  });
+
+  it("exact match scores highest", () => {
+    const exact = fuzzyScore("clear", "clear")!;
+    const prefix = fuzzyScore("clear", "cle")!;
+    expect(exact).toBeGreaterThan(prefix);
+  });
+
+  it("prefix match scores higher than mid-string match", () => {
+    const prefix = fuzzyScore("clear", "cl")!;
+    const mid = fuzzyScore("unclear", "cl")!;
+    expect(prefix).toBeGreaterThan(mid);
+  });
+
+  it("consecutive run bonus beats scattered match", () => {
+    // "abc" is adjacent in "abc"; in "axbxc" it's scattered.
+    const adjacent = fuzzyScore("abc", "abc")!;
+    const scattered = fuzzyScore("axbxc", "abc")!;
+    expect(adjacent).toBeGreaterThan(scattered);
+  });
+});
+
 describe("slash-catalog", () => {
-  it("completes partial slash commands", () => {
+  it("completes partial slash commands (prefix)", () => {
     const hits = completeSlashLine("/go");
     expect(hits).toContain("/goal");
     expect(hits.some((h) => h.startsWith("/"))).toBe(true);
+  });
+
+  it("fuzzy-matches a non-prefix subsequence (e.g. /ct → /compact)", () => {
+    const hits = completeSlashLine("/ct");
+    expect(hits).toContain("/compact");
+  });
+
+  it("ranks exact match first", () => {
+    const hits = completeSlashLine("/clear");
+    expect(hits[0]).toBe("/clear");
   });
 
   it("lists all commands for bare slash", () => {

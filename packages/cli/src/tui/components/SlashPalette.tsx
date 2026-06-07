@@ -92,16 +92,21 @@ function SlashPaletteImpl(props: Props) {
         const spec = entry.spec;
         const active = realIndex === safeSelected;
         return (
-          <Box key={spec.name} gap={1}>
-            <Text color={active ? theme.brand : theme.muted} bold={active}>
-              {active ? "›" : " "}
-            </Text>
-            <Text color={active ? theme.user : theme.assistant} bold={active}>
-              /{spec.name}
-            </Text>
-            <Text dimColor={!active} wrap="truncate-end">
-              {spec.summary}
-            </Text>
+          <Box key={spec.name} flexDirection="column">
+            <Box gap={1}>
+              <Text color={active ? theme.brand : theme.muted} bold={active}>
+                {active ? "›" : " "}
+              </Text>
+              <Text color={active ? theme.user : theme.assistant} bold={active}>
+                /{spec.name}
+              </Text>
+              <Text dimColor={!active} wrap="truncate-end">
+                {spec.summary}
+              </Text>
+            </Box>
+            {active ? (
+              <Text color={theme.muted}>{`      ${spec.usage}`}</Text>
+            ) : null}
           </Box>
         );
       })}
