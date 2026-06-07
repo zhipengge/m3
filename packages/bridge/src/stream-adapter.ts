@@ -132,6 +132,7 @@ export class StreamAdapter {
           ...(event.cacheCreation !== undefined
             ? { cacheCreation: event.cacheCreation }
             : {}),
+          ...(event.costUsd !== undefined ? { costUsd: event.costUsd } : {}),
           cumulative: event.cumulative,
         });
         break;

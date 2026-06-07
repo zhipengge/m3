@@ -67,4 +67,47 @@ describe("buildStatusBarText", () => {
   it("falls back to the brand name when nothing is set", () => {
     expect(buildStatusBarText({})).toBe("m3");
   });
+
+  it("includes USD cost when tokens carry costUsd", () => {
+    expect(
+      buildStatusBarText({
+        model: "m",
+        tokens: { input: 1000, output: 500, total: 1500, costUsd: 0.0123 },
+      }),
+    ).toContain("cost");
+    expect(
+      buildStatusBarText({
+        model: "m",
+        tokens: { input: 1000, output: 500, total: 1500, costUsd: 0.0123 },
+      }),
+    ).toMatch(/cost \$\d+\.\d+/);
+  });
+
+  it("hides the cost segment when costUsd is 0 or undefined", () => {
+    expect(
+      buildStatusBarText({
+        model: "m",
+        tokens: { input: 1000, output: 500, total: 1500, costUsd: 0 },
+      }),
+    ).not.toContain("cost");
+    expect(
+      buildStatusBarText({
+        model: "m",
+        tokens: { input: 1000, output: 500, total: 1500 },
+      }),
+    ).not.toContain("cost");
+  });
+
+  it("formats larger costs with 1 decimal ($12.5)", () => {
+    const out = buildStatusBarText({
+      model: "m",
+      tokens: { input: 0, output: 0, total: 0, costUsd: 12.5 },
+    });
+    // The actual emission skips when total=0, so build a nonzero total.
+    const out2 = buildStatusBarText({
+      model: "m",
+      tokens: { input: 1, output: 1, total: 2, costUsd: 12.5 },
+    });
+    expect(out2).toContain("$12.5");
+  });
 });

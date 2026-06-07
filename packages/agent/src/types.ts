@@ -51,6 +51,8 @@ export type AgentStreamEvent =
       cacheRead?: number;
       cacheCreation?: number;
       total: number;
+      /** Per-turn USD cost. Omitted when model pricing isn't configured. */
+      costUsd?: number;
       cumulative: { input: number; output: number; total: number };
     }
   | { type: "result"; text: string; sessionId?: string; usage?: Record<string, number> };

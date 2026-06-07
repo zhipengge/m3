@@ -83,6 +83,8 @@ export type HarnessEvent =
       cacheRead?: number;
       cacheCreation?: number;
       total: number;
+      /** Per-turn USD cost (omitted when no pricing configured). */
+      costUsd?: number;
       /** Running total across the whole session (so consumers don't
        * need to accumulate themselves). Reset on /clear. */
       cumulative: { input: number; output: number; total: number };

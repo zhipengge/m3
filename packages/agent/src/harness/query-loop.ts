@@ -177,6 +177,7 @@ export async function* runQueryLoop(
         ...(u.cacheRead !== undefined ? { cacheRead: u.cacheRead } : {}),
         ...(u.cacheCreation !== undefined ? { cacheCreation: u.cacheCreation } : {}),
         total: u.total,
+        ...(u.costUsd !== undefined ? { costUsd: u.costUsd } : {}),
         cumulative: { ...sessionTokens },
       };
     }

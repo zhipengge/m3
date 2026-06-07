@@ -24,6 +24,12 @@ export type TokenUsage = {
   cacheCreation?: number;
   /** Provider-reported total, or input+output when missing. */
   total: number;
+  /**
+   * USD cost for THIS turn, computed in the LLM provider from
+   * `ResolvedModel.pricing`. Missing when the model has no pricing
+   * configured (default behaviour: status bar shows `—`).
+   */
+  costUsd?: number;
 };
 
 export type LlmTurnResult = {

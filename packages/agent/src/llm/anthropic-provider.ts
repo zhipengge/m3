@@ -139,17 +139,23 @@ export class AnthropicLlmProvider implements LlmProvider {
       // cache_read_input_tokens). Normalize into our shared TokenUsage.
       const u = final.usage;
       const usage = u
-        ? {
-            input: u.input_tokens ?? 0,
-            output: u.output_tokens ?? 0,
-            cacheRead: u.cache_read_input_tokens ?? undefined,
-            cacheCreation: u.cache_creation_input_tokens ?? undefined,
-            total:
-              (u.input_tokens ?? 0) +
-              (u.output_tokens ?? 0) +
-              (u.cache_read_input_tokens ?? 0) +
-              (u.cache_creation_input_tokens ?? 0),
-          }
+        ? (() => {
+            const input = u.input_tokens ?? 0;
+            const output = u.output_tokens ?? 0;
+            const cacheRead = u.cache_read_input_tokens ?? 0;
+            const cacheCreation = u.cache_creation_input_tokens ?? 0;
+            const total = input + output + cacheRead + cacheCreation;
+            const costUsd = (input * (params.model.pricing?.input ?? 0) +
+              output * (params.model.pricing?.output ?? 0)) / 1_000_000;
+            return {
+              input,
+              output,
+              cacheRead: u.cache_read_input_tokens ?? undefined,
+              cacheCreation: u.cache_creation_input_tokens ?? undefined,
+              total,
+              costUsd: params.model.pricing ? costUsd : undefined,
+            };
+          })()
         : undefined;
 
       return {

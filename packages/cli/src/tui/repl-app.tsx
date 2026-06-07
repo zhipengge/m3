@@ -78,6 +78,7 @@ export function ReplApp(props: ReplAppProps) {
     input: number;
     output: number;
     total: number;
+    costUsd?: number;
   } | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<ReplMedia>([]);
   const [thinkingExpanded, setThinkingExpandedState] = useState(

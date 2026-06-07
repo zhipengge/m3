@@ -250,9 +250,25 @@ export class OpenAiChatProvider implements LlmProvider {
               input: usage.input,
               output: usage.output,
               total: usage.total ?? usage.input + usage.output,
+              ...(computeCostUsd(usage.input, usage.output, params.model.pricing)
+                ? { costUsd: computeCostUsd(usage.input, usage.output, params.model.pricing)! }
+                : {}),
             },
           }
         : {}),
     };
   }
+}
+
+/**
+ * Cost = inputTokens × inputPrice / 1_000_000 + outputTokens × outputPrice / 1_000_000.
+ * Returns undefined when pricing is missing (consumer renders `—`).
+ */
+function computeCostUsd(
+  inputTokens: number,
+  outputTokens: number,
+  pricing: { input: number; output: number } | undefined,
+): number | undefined {
+  if (!pricing) return undefined;
+  return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
 }

@@ -43,6 +43,7 @@ export function mapHarnessEvent(evt: HarnessEvent): AgentStreamEvent[] {
           ...(evt.cacheRead !== undefined ? { cacheRead: evt.cacheRead } : {}),
           ...(evt.cacheCreation !== undefined ? { cacheCreation: evt.cacheCreation } : {}),
           total: evt.total,
+          ...(evt.costUsd !== undefined ? { costUsd: evt.costUsd } : {}),
           cumulative: evt.cumulative,
         },
       ];

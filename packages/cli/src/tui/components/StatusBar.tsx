@@ -10,7 +10,7 @@ type Props = {
   dashboardUrl?: string;
   /** Cumulative session token usage. When undefined, the bar omits the
    *  token segment entirely (so a fresh session doesn't show "tok 0"). */
-  tokens?: { input: number; output: number; total: number };
+  tokens?: { input: number; output: number; total: number; costUsd?: number };
   /** Session wall-clock duration since startup, in ms. */
   sessionMs?: number;
   /** Total tool calls made this session. */
@@ -43,6 +43,14 @@ function contextBar(pct: number): { bar: string; color: string; warn: boolean } 
   return { bar, color: warn ? theme.warn : theme.muted, warn };
 }
 
+function fmtCost(usd: number): string {
+  if (usd === 0) return "$0.00";
+  if (usd < 0.01) return "<$0.01";
+  if (usd < 1) return `$${usd.toFixed(3)}`;
+  if (usd < 10) return `$${usd.toFixed(2)}`;
+  return `$${usd.toFixed(1)}`;
+}
+
 export function buildStatusBarText(props: Props): string {
   const parts: string[] = [];
   if (props.model) parts.push(props.model);
@@ -51,6 +59,9 @@ export function buildStatusBarText(props: Props): string {
       `tok ${fmtTokens(props.tokens.total)} ` +
         `(↑${fmtTokens(props.tokens.input)} ↓${fmtTokens(props.tokens.output)})`,
     );
+    if (props.tokens.costUsd !== undefined && props.tokens.costUsd > 0) {
+      parts.push(`cost ${fmtCost(props.tokens.costUsd)}`);
+    }
   }
   if (props.contextPct !== undefined) {
     const pct = Math.min(100, Math.round(props.contextPct * 100));
@@ -91,6 +102,13 @@ function StatusBarImpl(props: Props) {
           `(↑${fmtTokens(props.tokens.input)} ↓${fmtTokens(props.tokens.output)})`}
       </Text>,
     );
+    if (props.tokens.costUsd !== undefined && props.tokens.costUsd > 0) {
+      parts.push(
+        <Text key="cost" color={theme.brand} wrap="truncate-end">
+          {`cost ${fmtCost(props.tokens.costUsd)}`}
+        </Text>,
+      );
+    }
   }
   if (props.contextPct !== undefined) {
     const pct = Math.min(100, Math.round(props.contextPct * 100));
