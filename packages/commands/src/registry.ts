@@ -26,6 +26,7 @@ export type CommandResult =
   | { action: "clear_undo" }
   | { action: "compact_session"; focus?: string }
   | { action: "set_goal"; condition: string }
+  | { action: "set_model"; model: string }
   | { action: "passthrough" };
 
 export type CommandHandler = (args: string, ctx: CommandContext) => CommandResult;
@@ -159,12 +160,18 @@ const BUILTIN_COMMANDS: Record<string, CommandHandler> = {
     if (!query) {
       return {
         action: "reply_only",
-        text: `Active model: ${ctx.config.agent.model}\nList: m3 models\nSwitch: m3 model <ref>`,
+        text: `Active model: ${ctx.config.agent.model}\nList: m3 models\nSwitch: m3 model <ref> (persists to ~/.m3/last-model.json)`,
       };
     }
+    // B6: persist the user's choice to a per-session override file
+    // so the next session can read it. The TUI also reads it for the
+    // StatusBar so the user sees the pending model immediately. The
+    // current in-flight engine call still uses the config-resolved
+    // model — switching mid-stream would require an engine refactor
+    // (the LLM provider is bound to the engine instance).
     return {
-      action: "reply_only",
-      text: `To switch model, run in terminal:\n  m3 model ${query}\n\n(/model in chat does not write m3.json)`,
+      action: "set_model",
+      model: query,
     };
   },
   permissions: (_args, ctx) => ({
