@@ -156,6 +156,13 @@ export function ReplApp(props: ReplAppProps) {
     | { filePath?: string; oldString?: string; newString: string }
     | null
   >(null);
+  /**
+   * First-byte progress message. Set on submit, cleared on the
+   * first assistant/reasoning delta (i.e. the model started
+   * responding). Lives as a separate state so it doesn't fight
+   * with the liveThinking/liveAssistant streaming region.
+   */
+  const [pendingProgress, setPendingProgress] = useState<string | null>(null);
   const [turnCount, setTurnCount] = useState(0);
   /** Per-call startedAt timestamp, captured when tool_use fires so we
    *  can compute durationMs in tool_result. */
@@ -239,6 +246,9 @@ export function ReplApp(props: ReplAppProps) {
 
   const streamBufferRef = useRef(
     createStreamBuffer((kind, delta) => {
+      // First-byte arrived — clear the progress placeholder so it
+      // doesn't sit there forever if the LLM is slow.
+      if (pendingProgress) setPendingProgress(null);
       if (kind === "thinking") {
         setLoading(true);
         setLiveThinking((prev) => {
@@ -582,6 +592,11 @@ export function ReplApp(props: ReplAppProps) {
       setLiveThinking(null);
       setLiveAssistant(null);
       streamBufferRef.current.flushNow();
+      // B5: show a 3-stage progress toast so the gap between submit
+      // and first byte is no longer a dead spinner. The toast lives
+      // in `pendingProgress` and is replaced by the real first delta
+      // via the streamBuffer callback (which now clears it).
+      setPendingProgress(`▸ sending prompt (${normalized.length} chars)…`);
       // Mark the start of this turn so onDeliver can show "✓ done in 3.4s"
       pendingTurnStartedAtRef.current = Date.now();
       // Reset the tool timeline — a new turn gets a fresh "what is the
@@ -883,6 +898,9 @@ export function ReplApp(props: ReplAppProps) {
 
       <ActivityFooter current={currentTool} recent={recentTools} turns={turnCount} />
 
+      {pendingProgress ? (
+        <Text dimColor>{pendingProgress}</Text>
+      ) : null}
       {showSpinner ? <BreathingSpinner /> : null}
 
       {pendingAttachments.length > 0 ? (
@@ -942,6 +960,7 @@ export function ReplApp(props: ReplAppProps) {
         tokens={tokens ?? undefined}
         sessionMs={Date.now() - sessionStartRef.current}
         toolCalls={toolCountRef.current}
+        sessionAllowedCount={sessionAllowedToolsRef.current.size}
       />
     </Box>
   );

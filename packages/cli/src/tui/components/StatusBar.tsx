@@ -25,6 +25,11 @@ type Props = {
   sessionMs?: number;
   /** Total tool calls made this session. */
   toolCalls?: number;
+  /** Count of tools pre-approved for the rest of the session via
+   *  the "A" (allow_session) key in the permission prompt. Hidden
+   *  when 0; shown as 🔓 N when > 0 so the user has a constant
+   *  reminder that destructive tools are pre-approved. */
+  sessionAllowedCount?: number;
 };
 
 /** Compact number formatter: 999 → "999", 1234 → "1.2k", 1_500_000 → "1.5M". */
@@ -97,6 +102,13 @@ export function buildStatusBarText(props: Props): string {
   if (props.toolCalls !== undefined) {
     parts.push(`${props.toolCalls} tools`);
   }
+  if (props.sessionAllowedCount !== undefined && props.sessionAllowedCount > 0) {
+    // Bell-and-whistle-but-useful: every session-allow grant is a
+    // promise that "this tool will run unprompted for the rest of
+    // the session." A constant reminder in the bar makes a
+    // forgotten grant obvious.
+    parts.push(`🔓 ${props.sessionAllowedCount} session`);
+  }
   if (props.goal) parts.push("◎ goal");
   if (props.dashboardUrl) parts.push(props.dashboardUrl);
   return parts.join(" · ") || "m3";
@@ -168,6 +180,13 @@ function StatusBarImpl(props: Props) {
     parts.push(
       <Text key="tools" color={theme.muted} wrap="truncate-end">
         {`${props.toolCalls} tools`}
+      </Text>,
+    );
+  }
+  if (props.sessionAllowedCount !== undefined && props.sessionAllowedCount > 0) {
+    parts.push(
+      <Text key="session-allow" color={theme.warn} wrap="truncate-end">
+        {`🔓 ${props.sessionAllowedCount} session`}
       </Text>,
     );
   }
