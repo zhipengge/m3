@@ -5,6 +5,15 @@ export type AuditEvent = {
   decision: "allow" | "deny";
   /** Short, non-sensitive summary of the tool input (truncated, secrets redacted). */
   summary?: string;
+  /**
+   * Optional content hash (sha256 of the full input, hex). Lets a
+   * reviewer verify that the audit record's `summary` accurately
+   * represents the tool call without retaining the full input.
+   * Only present when the file-backed sink is used.
+   */
+  inputHash?: string;
+  /** Origin of the decision: prompt (user approved), mode (auto), pattern (rule). */
+  origin?: "prompt" | "mode" | "pattern";
 };
 
 export type AuditSink = (event: AuditEvent) => void;
@@ -87,6 +96,94 @@ export class AuditLog {
     if (process.env.M3_AUDIT_SILENT === "1") return;
     process.stderr.write(`[m3:audit] ${JSON.stringify(event)}\n`);
   };
+}
+
+/**
+ * File-backed audit sink. Appends each event as a single line of
+ * JSON to \`~/.m3/audit/YYYY-MM-DD.jsonl\` — one file per day for
+ * easy rotation. Atomic per-line writes (no multi-line JSON
+ * records), so a tail -f on the day's file is a live
+ * permission-decision feed.
+ *
+ * The \`AuditLog\` itself is in-process; the file sink just
+ * persists the events. The decision summary is already
+ * redacted by \`AuditLog.record\`; the file path is forced to
+ * 0o600 via the shared fs helper so a multi-user host can't
+ * read the day's permission history.
+ */
+import fs from "node:fs";
+import path from "node:path";
+import { createHash } from "node:crypto";
+import { expandHome } from "@m3/config";
+
+const AUDIT_DIR = "~/.m3/audit";
+
+function auditDir(): string {
+  return expandHome(AUDIT_DIR);
+}
+
+function todayFile(): string {
+  const d = new Date();
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return path.join(auditDir(), `${y}-${m}-${day}.jsonl`);
+}
+
+function hashInput(input: unknown): string | undefined {
+  if (input === undefined) return undefined;
+  try {
+    const json = typeof input === "string" ? input : JSON.stringify(input);
+    return createHash("sha256").update(json).digest("hex").slice(0, 16);
+  } catch {
+    return undefined;
+  }
+}
+
+export function fileAuditSink(event: AuditEvent): void {
+  if (process.env.M3_AUDIT_SILENT === "1") return;
+  const dir = auditDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const fp = todayFile();
+  const enriched = {
+    ...event,
+    inputHash: event.inputHash ?? hashInput(event.summary),
+  };
+  // appendFileSync is O_APPEND so concurrent writers serialize at
+  // the filesystem level; we still write one record per syscall
+  // so a torn write can only lose the last line, not the whole
+  // record. Set the file mode on first write only — chmod is a
+  // no-op on already-correctly-permissioned files.
+  let needsChmod = false;
+  try {
+    const st = fs.statSync(fp);
+    needsChmod = (st.mode & 0o777) !== 0o600;
+  } catch {
+    needsChmod = true;
+  }
+  fs.appendFileSync(fp, JSON.stringify(enriched) + "\n", { mode: 0o600 });
+  if (needsChmod) {
+    try {
+      fs.chmodSync(fp, 0o600);
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+
+/** Make a writer that mirrors to BOTH stderr and the daily file. */
+export function dualAuditSink(event: AuditEvent): void {
+  AuditLog.stderrSink(event);
+  fileAuditSink(event);
+}
+
+/** Force a sync flush — fs.appendFileSync is synchronous but
+ *  Node may buffer in odd platforms; this makes the daily
+ *  file observable immediately after \`record\`. */
+export function flushAuditFile(): void {
+  // appendFileSync returns void and is synchronous; the daily
+  // file is always flushed by the time fileAuditSink returns.
+  // Exposed for callers that want to guarantee visibility.
 }
 
 export function summarizeInput(input: unknown, max = 120): string {

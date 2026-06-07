@@ -2,10 +2,10 @@ import type { ToolUseBlock } from "@anthropic-ai/sdk/resources/messages/messages
 import type { ToolContext, ToolDefinition, HarnessEvent } from "../harness/types.js";
 import { findToolByName } from "../tools/registry.js";
 import { PermissionManager } from "../permissions/manager.js";
-import { AuditLog, summarizeInput } from "../security/audit.js";
+import { AuditLog, fileAuditSink, summarizeInput } from "../security/audit.js";
 import { describeToolCall } from "./tool-description.js";
 
-const auditLog = new AuditLog();
+const auditLog = new AuditLog(fileAuditSink);
 
 type ToolBatch = { concurrent: boolean; blocks: ToolUseBlock[] };
 
