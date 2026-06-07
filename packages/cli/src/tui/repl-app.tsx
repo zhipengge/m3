@@ -769,6 +769,57 @@ export function ReplApp(props: ReplAppProps) {
           setPermissionChoice("allow");
           return;
         }
+        if (_char === "?") {
+          // Tool explainer: surface a one-shot breakdown of what
+          // the pending call is about to do. The goal is to give
+          // the user enough information to make an informed allow /
+          // deny decision without leaving the prompt. We keep
+          // this sync because useInput's callback isn't async —
+          // the bash-safety verdict is best-effort skipped here
+          // (the harness already runs it on every Bash call, so
+          // the user gets the warning in the tool_result either
+          // way).
+          const req = pendingPermission;
+          const lines: string[] = [`🔍 ${req.toolName} — what this will do:`];
+          if (req.toolName === "Bash") {
+            const cmd = req.description.startsWith("Bash: ")
+              ? req.description.slice("Bash: ".length)
+              : req.description;
+            lines.push(`  command: ${cmd}`);
+            lines.push("  (Bash: command is gated by the bash-safety rules; the verdict will appear in the tool_result)");
+          } else if (req.toolName === "Read" || req.toolName === "Edit" || req.toolName === "Write") {
+            lines.push(`  target: ${req.description}`);
+            lines.push(
+              `  effect: ${
+                req.toolName === "Read"
+                  ? "reads the file (no writes)"
+                  : req.toolName === "Edit"
+                    ? "edits the file in place"
+                    : "overwrites the file"
+              }`,
+            );
+          } else if (req.toolName === "Grep" || req.toolName === "Glob") {
+            lines.push(`  pattern: ${req.description}`);
+            lines.push(
+              `  effect: ${
+                req.toolName === "Grep"
+                  ? "scans files for the pattern (no writes)"
+                  : "lists files matching the pattern (no writes)"
+              }`,
+            );
+          } else {
+            lines.push(`  ${req.description}`);
+            lines.push(`  (no detailed preview available for ${req.toolName})`);
+          }
+          lines.push("");
+          lines.push("  ←/→ cycle · Y/N/A/R · ? explain · Esc deny");
+          pushCompleted({
+            id: nextId(),
+            role: "system",
+            text: lines.join("\n"),
+          });
+          return;
+        }
         if (key.escape) {
           resolvePermission("deny");
           return;
