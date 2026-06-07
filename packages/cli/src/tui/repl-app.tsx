@@ -34,6 +34,14 @@ export type ReplAppProps = {
   workspace?: string;
   dashboardUrl?: string;
   initialThinkingExpanded?: boolean;
+  /**
+   * The permission mode used for channel-originated (Feishu/Slack/
+   * WebChat) inbound messages. When set to "bypassPermissions", the
+   * banner surfaces a one-line warning so a user who's never thought
+   * about it gets a chance to reconsider before an IM-triggered Bash
+   * runs unapproved.
+   */
+  channelPermissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan";
   onSubmit: (line: string, media?: ReplMedia) => void | Promise<void>;
 };
 
@@ -56,7 +64,7 @@ export function ReplApp(props: ReplAppProps) {
     {
       id: BANNER_ID,
       role: "system",
-      text: buildBannerText(props.workspace),
+      text: buildBannerText(props.workspace, props.channelPermissionMode),
     },
   ]);
   const [liveThinking, setLiveThinking] = useState<ChatLine | null>(null);
@@ -754,12 +762,26 @@ export function ReplApp(props: ReplAppProps) {
   );
 }
 
-function buildBannerText(workspace?: string): string {
+function buildBannerText(
+  workspace?: string,
+  channelPermissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan",
+): string {
   const lines = [
 "m3",
 "Multi-modality · Multi-task · Multi-agent",
 "Type / for commands · Ctrl+O expand thinking · Enter send · Ctrl+C exit",
   ];
   if (workspace) lines.push(`Workspace: ${workspace}`);
+  // Channel-spawned runs (Feishu/Slack/WebChat) default to
+  // bypassPermissions so the IM UX isn't a wall of permission
+  // prompts. That's a real security trade-off: a prompt-injection
+  // via a Feishu message could land a Bash call that runs without
+  // approval. Surface it loudly so a user who has never opened
+  // m3.json can see the deal they're getting.
+  if (channelPermissionMode === "bypassPermissions") {
+    lines.push(
+      "⚠ Channel messages run with bypassPermissions — switch to 'default' in m3.json (run /permissions) to require approval.",
+    );
+  }
   return lines.join("\n");
 }

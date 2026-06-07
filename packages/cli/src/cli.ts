@@ -388,7 +388,16 @@ program
 
     status("info", "Permission mode", config.agent.permissionMode);
     const chMode = config.agent.channelPermissionMode ?? "bypassPermissions";
-    status("info", "Channel permission mode", chMode);
+    status(
+      chMode === "bypassPermissions" ? "warn" : "info",
+      "Channel permission mode",
+      chMode,
+    );
+    if (chMode === "bypassPermissions") {
+      suggest(
+        "Channel-originated runs (Feishu/Slack/WebChat) skip permission prompts. Set agent.channelPermissionMode to 'default' to require approval.",
+      );
+    }
     status("info", "Slash commands", String(listCommands().length));
 
     try {

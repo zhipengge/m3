@@ -49,6 +49,7 @@ export async function runInkRepl(options: InkReplOptions): Promise<void> {
       workspace: options.workspace,
       dashboardUrl: options.dashboardUrl,
       initialThinkingExpanded: options.config.agent.thinkingDisplay === "expanded",
+      channelPermissionMode: options.config.agent.channelPermissionMode ?? "bypassPermissions",
       onSubmit: options.onLine,
     }),
     {
