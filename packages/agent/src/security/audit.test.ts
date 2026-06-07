@@ -40,6 +40,44 @@ describe("redactSecrets", () => {
     expect(r).not.toContain("abcdefghij1234567890");
   });
 
+  it("redacts Authorization Digest headers", () => {
+    const r = redactSecrets("Authorization: Digest username=\"a\", realm=\"r\"");
+    expect(r).not.toContain("Digest username");
+  });
+
+  it("redacts JWTs (header.payload.signature)", () => {
+    const jwt =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    const r = redactSecrets(`bearer=${jwt}`);
+    expect(r).not.toContain(jwt);
+    expect(r).toContain("[REDACTED]");
+  });
+
+  it("redacts GitHub fine-grained + server tokens", () => {
+    expect(redactSecrets("ghs_abcdefghijklmnopqrstuvwxyz1234")).not.toContain("ghs_");
+    expect(
+      redactSecrets("github_pat_11ABCXYZ0_abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyzABCD"),
+    ).not.toContain("github_pat_");
+  });
+
+  it("redacts npm publish tokens", () => {
+    expect(redactSecrets("//reg.npmjs.org/:_authToken=npm_abcdefghijklmnopqrstuv")).not.toContain(
+      "npm_abcdefghijklmnopqrstuv",
+    );
+  });
+
+  it("redacts Anthropic sk-ant- keys", () => {
+    expect(redactSecrets("ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnop1234")).not.toContain(
+      "sk-ant-api03",
+    );
+  });
+
+  it("redacts AWS STS session tokens (FwoGZXIv... base64 blob)", () => {
+    // A realistic-shape token (~110+ base64 chars after the prefix).
+    const t = "FwoGZXIv" + "A".repeat(140);
+    expect(redactSecrets(`AWS_SESSION=${t}`)).not.toContain(t);
+  });
+
   it("leaves benign input alone", () => {
     expect(redactSecrets("ls -la /tmp")).toBe("ls -la /tmp");
     expect(redactSecrets("hello world")).toBe("hello world");

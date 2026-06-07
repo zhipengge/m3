@@ -17,14 +17,26 @@ type SecretPattern = { re: RegExp; /** Keep the leading capture group as a label
 
 const SECRET_PATTERNS: SecretPattern[] = [
   // Authorization: Bearer <token> / Basic <token> / Token <token>
-  { re: /\b(authorization\s*:\s*(?:bearer|basic|token)\s+)([^\s"',}]+)/gi, preserveLabel: true },
+  { re: /\b(authorization\s*:\s*(?:bearer|basic|token|digest)\s+)([^\s"',}]+)/gi, preserveLabel: true },
   // Generic key=value / key: value for known secret keywords
   { re: /\b(api[_-]?key|access[_-]?key|secret|password|passwd|pwd|token)(\s*[:=]\s*["']?)([A-Za-z0-9._\-+/=]{8,})["']?/gi, preserveLabel: true },
-  // Common API key prefixes
+  // JSON Web Tokens — three base64url segments separated by dots. The
+  // header always starts with eyJ (base64 of "{").
+  { re: /\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g },
+  // OpenAI / Anthropic / DeepSeek style secret prefixes
   { re: /\bsk-[A-Za-z0-9_-]{16,}\b/g },
+  { re: /\bsk-ant-[A-Za-z0-9_-]{16,}\b/g },
+  // GitHub classic + fine-grained + server tokens
   { re: /\bghp_[A-Za-z0-9]{20,}\b/g },
+  { re: /\bghs_[A-Za-z0-9]{20,}\b/g },
+  { re: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g },
+  // Slack bot/app/legacy/etc.
   { re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
+  // npm publish tokens
+  { re: /\bnpm_[A-Za-z0-9]{20,}\b/g },
+  // AWS access key id (long) and STS session token ("FwoGZXIv..." base64)
   { re: /\bAKIA[0-9A-Z]{16}\b/g },
+  { re: /\bFwoGZXIv[A-Za-z0-9+\/=]{100,}\b/g },
   // Long values assigned to env-var-like keys (preserve key)
   { re: /\b([A-Z][A-Z0-9_]{3,}\s*=\s*)([^\s"',]{16,})/g, preserveLabel: true },
 ];
