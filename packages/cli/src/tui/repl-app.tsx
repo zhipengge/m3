@@ -98,7 +98,7 @@ export function ReplApp(props: ReplAppProps) {
   );
   /** Which option in the permission prompt is currently highlighted. */
   const [permissionChoice, setPermissionChoice] = useState<
-    "allow" | "deny" | "allow_session"
+    "allow" | "deny" | "allow_session" | "deny_with_reason"
   >("allow");
   /**
    * Tools the user has chosen to "allow for this session" via the
@@ -723,7 +723,7 @@ export function ReplApp(props: ReplAppProps) {
       // than inside <PermissionPrompt> so the choice state is reset
       // cleanly on prompt change.
       if (pendingPermission) {
-        const opts = ["allow", "allow_session", "deny"] as const;
+        const opts = ["allow", "allow_session", "deny", "deny_with_reason"] as const;
         const idx = opts.indexOf(permissionChoice);
         if (key.leftArrow || (key.tab && key.shift)) {
           setPermissionChoice(opts[(idx - 1 + opts.length) % opts.length]!);
@@ -734,6 +734,18 @@ export function ReplApp(props: ReplAppProps) {
           return;
         }
         if (key.return) {
+          if (permissionChoice === "deny_with_reason") {
+            // B7: don't actually deny yet — instead, pre-fill the
+            // input with a "[user denied <tool> with reason: ..."
+            // prefix and let the user complete the sentence.
+            // The user can backspace the prefix and re-select
+            // a different option if they change their mind.
+            const tool = pendingPermission.toolName;
+            setInput(`[user denied ${tool} with reason: `);
+            setPendingPermission(null);
+            setPermissionChoice("allow"); // reset for next prompt
+            return;
+          }
           resolvePermission(permissionChoice);
           return;
         }
@@ -747,6 +759,14 @@ export function ReplApp(props: ReplAppProps) {
         }
         if (_char === "a" || _char === "A") {
           resolvePermission("allow_session");
+          return;
+        }
+        if (_char === "r" || _char === "R") {
+          // B7: same as picking the 4th option + Enter.
+          const tool = pendingPermission.toolName;
+          setInput(`[user denied ${tool} with reason: `);
+          setPendingPermission(null);
+          setPermissionChoice("allow");
           return;
         }
         if (key.escape) {
