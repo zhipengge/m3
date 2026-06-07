@@ -99,15 +99,11 @@ describe("buildStatusBarText", () => {
   });
 
   it("formats larger costs with 1 decimal ($12.5)", () => {
-    const out = buildStatusBarText({
-      model: "m",
-      tokens: { input: 0, output: 0, total: 0, costUsd: 12.5 },
-    });
     // The actual emission skips when total=0, so build a nonzero total.
-    const out2 = buildStatusBarText({
+    const out = buildStatusBarText({
       model: "m",
       tokens: { input: 1, output: 1, total: 2, costUsd: 12.5 },
     });
-    expect(out2).toContain("$12.5");
+    expect(out).toContain("$12.5");
   });
 });

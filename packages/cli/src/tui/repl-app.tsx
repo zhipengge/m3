@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Box, Static, Text, useApp, useInput } from "ink";
+import { Box, Static, Text, useApp, useInput, useStdout } from "ink";
 import { listCommands } from "@m3/commands";
 import { saveChannelMedia } from "@m3/channel-extensions";
 import type { InboundMessage } from "@m3/channels";
@@ -25,6 +25,7 @@ import {
 import { createStreamBuffer } from "./repl-stream-buffer.js";
 import { theme } from "./theme.js";
 import { readClipboardImage } from "../clipboard-image.js";
+import { SplitView, filePathForTool } from "./components/SplitView.js";
 
 type ReplMedia = NonNullable<InboundMessage["media"]>;
 
@@ -49,6 +50,8 @@ function nextId(): string {
 
 export function ReplApp(props: ReplAppProps) {
   const { exit } = useApp();
+  const { stdout } = useStdout();
+  const terminalWidth = stdout?.columns ?? 80;
   const [completed, setCompleted] = useState<ChatLine[]>(() => [
     {
       id: BANNER_ID,
@@ -93,6 +96,18 @@ export function ReplApp(props: ReplAppProps) {
    * during long multi-tool turns.
    */
   const [currentTool, setCurrentTool] = useState<RecentTool | undefined>(undefined);
+  /**
+   * File currently shown in the left pane of SplitView. Updated
+   * whenever the agent calls Read / Edit / Write — the user
+   * sees the file content immediately after the tool runs.
+   */
+  const [viewedFile, setViewedFile] = useState<string | null>(null);
+  /**
+   * When true, the live region renders a split view with a file
+   * viewer on the left and the chat on the right. Toggled with
+   * Ctrl+T. Defaults to single-pane chat (matches Claude Code).
+   */
+  const [splitView, setSplitView] = useState(false);
   const [recentTools, setRecentTools] = useState<RecentTool[]>([]);
   /**
    * Edit / Write tool calls surface a tiny inline diff above the
@@ -268,6 +283,10 @@ export function ReplApp(props: ReplAppProps) {
         toolStartRef.current.set(info.id, Date.now());
         toolCountRef.current += 1;
         setCurrentTool({ name: info.name, detail, running: true });
+        // Track the most recent file-targeted tool so the split
+        // view's left pane can follow the agent's attention.
+        const f = filePathForTool(info.name, info.input);
+        if (f) setViewedFile(f);
         // Surface Edit/Write changes as a tiny inline diff. Capped
         // content size (we read the input from the harness directly,
         // not the file, so the cost is bounded by the model output).
@@ -545,6 +564,13 @@ export function ReplApp(props: ReplAppProps) {
         toggleThinkingExpanded();
         return;
       }
+      // Ctrl+T toggles the split view (file viewer on the left,
+      // chat on the right). Single-pane by default — opt-in, like
+      // Vim splits — so a user who never asks for it isn't surprised.
+      if (key.ctrl && _char === "t") {
+        setSplitView((v) => !v);
+        return;
+      }
       // Up/Down arrow recall through the persistent history. We
       // intercept only when the palette is not active (the palette
       // uses Up/Down for its own navigation) and there's no
@@ -629,97 +655,110 @@ export function ReplApp(props: ReplAppProps) {
     [props.workspace],
   );
 
+  // The chat live region is rendered identically in single-pane
+  // and split-pane modes; the only difference is the outer
+  // container. Build it once as a Fragment and reuse.
+  const liveRegion = (
+    <Box flexDirection="column" flexShrink={0} width="100%">
+      {liveThinking ? (
+        <MessageRow
+          message={liveThinking}
+          thinkingExpanded={thinkingExpanded || Boolean(liveThinking.streaming)}
+        />
+      ) : null}
+      {liveAssistant ? (
+        <MessageRow message={liveAssistant} thinkingExpanded={false} />
+      ) : null}
+      {completed.length <= 1 && !liveThinking && !liveAssistant && !currentTool ? (
+        <Box flexDirection="column" marginY={0}>
+          <Text color={theme.muted}>Send a message or type / for commands</Text>
+          {recentTools.length > 0 ? (
+            <Text color={theme.muted}>
+              Last: {recentTools[0]!.name}{" "}
+              {recentTools[0]!.durationMs !== undefined
+                ? `${(recentTools[0]!.durationMs! / 1000).toFixed(1)}s`
+                : ""}
+            </Text>
+          ) : null}
+        </Box>
+      ) : null}
+
+      {pendingPermission ? (
+        <PermissionPrompt request={pendingPermission} selected={permissionChoice} />
+      ) : null}
+
+      {pendingDiff ? (
+        <CodeDiff
+          filePath={pendingDiff.filePath}
+          oldString={pendingDiff.oldString}
+          newString={pendingDiff.newString}
+        />
+      ) : null}
+
+      <ActivityFooter current={currentTool} recent={recentTools} turns={turnCount} />
+
+      {showSpinner ? <BreathingSpinner /> : null}
+
+      {pendingAttachments.length > 0 ? (
+        <Box
+          borderStyle="round"
+          borderColor={theme.accent}
+          paddingX={1}
+          marginBottom={0}
+          flexDirection="row"
+          gap={1}
+        >
+          <Text color={theme.accent}>📎</Text>
+          <Text dimColor>
+            {pendingAttachments.length} image{pendingAttachments.length === 1 ? "" : "s"} attached
+          </Text>
+          <Text dimColor>
+            ({pendingAttachments.map((a) => a.path.split("/").pop()).join(", ")})
+          </Text>
+        </Box>
+      ) : null}
+
+      <ReplInput
+        input={input}
+        onInputChange={handleInputChange}
+        onSubmitLine={submitLine}
+        slashNames={slashNames}
+        paletteIdx={paletteIdx}
+        onPaletteIdxChange={setPaletteIdx}
+        pendingPermission={pendingPermission}
+        onResolvePermission={resolvePermission}
+        disabled={inputDisabled}
+        paletteActive={paletteActive}
+      />
+      <StatusBar
+        model={props.modelLabel}
+        dashboardUrl={props.dashboardUrl}
+        tokens={tokens ?? undefined}
+        sessionMs={Date.now() - sessionStartRef.current}
+        toolCalls={toolCountRef.current}
+      />
+    </Box>
+  );
+
   return (
     <Box flexDirection="column" width="100%">
       <Static items={completed}>{renderCompleted}</Static>
-
-      <Box flexDirection="column" flexShrink={0} width="100%">
-        {liveThinking ? (
-          <MessageRow
-            message={liveThinking}
-            thinkingExpanded={thinkingExpanded || Boolean(liveThinking.streaming)}
-          />
-        ) : null}
-        {liveAssistant ? (
-          <MessageRow message={liveAssistant} thinkingExpanded={false} />
-        ) : null}
-        {completed.length <= 1 && !liveThinking && !liveAssistant && !currentTool ? (
-          <Box flexDirection="column" marginY={0}>
-            <Text color={theme.muted}>Send a message or type / for commands</Text>
-            {recentTools.length > 0 ? (
-              <Text color={theme.muted}>
-                Last: {recentTools[0]!.name} {recentTools[0]!.durationMs !== undefined
-                  ? `${(recentTools[0]!.durationMs! / 1000).toFixed(1)}s`
-                  : ""}
-              </Text>
-            ) : null}
-          </Box>
-        ) : null}
-
-        {pendingPermission ? (
-          <PermissionPrompt request={pendingPermission} selected={permissionChoice} />
-        ) : null}
-
-        {pendingDiff ? (
-          <CodeDiff
-            filePath={pendingDiff.filePath}
-            oldString={pendingDiff.oldString}
-            newString={pendingDiff.newString}
-          />
-        ) : null}
-
-        <ActivityFooter current={currentTool} recent={recentTools} turns={turnCount} />
-
-        {showSpinner ? <BreathingSpinner /> : null}
-
-        {pendingAttachments.length > 0 ? (
-          <Box
-            borderStyle="round"
-            borderColor={theme.accent}
-            paddingX={1}
-            marginBottom={0}
-            flexDirection="row"
-            gap={1}
-          >
-            <Text color={theme.accent}>📎</Text>
-            <Text dimColor>
-              {pendingAttachments.length} image{pendingAttachments.length === 1 ? "" : "s"} attached
-            </Text>
-            <Text dimColor>
-              ({pendingAttachments.map((a) => a.path.split("/").pop()).join(", ")})
-            </Text>
-          </Box>
-        ) : null}
-
-        <ReplInput
-          input={input}
-          onInputChange={handleInputChange}
-          onSubmitLine={submitLine}
-          slashNames={slashNames}
-          paletteIdx={paletteIdx}
-          onPaletteIdxChange={setPaletteIdx}
-          pendingPermission={pendingPermission}
-          onResolvePermission={resolvePermission}
-          disabled={inputDisabled}
-          paletteActive={paletteActive}
-        />
-        <StatusBar
-          model={props.modelLabel}
-          dashboardUrl={props.dashboardUrl}
-          tokens={tokens ?? undefined}
-          sessionMs={Date.now() - sessionStartRef.current}
-          toolCalls={toolCountRef.current}
-        />
-      </Box>
+      {splitView ? (
+        <SplitView filePath={viewedFile} width={terminalWidth} chatHeight={0}>
+          {liveRegion}
+        </SplitView>
+      ) : (
+        liveRegion
+      )}
     </Box>
   );
 }
 
 function buildBannerText(workspace?: string): string {
   const lines = [
-    "m3",
-    "Multi-modality · Multi-task · Multi-agent",
-    "Type / for commands · Ctrl+O expand thinking · Enter send · Ctrl+C exit",
+"m3",
+"Multi-modality · Multi-task · Multi-agent",
+"Type / for commands · Ctrl+O expand thinking · Enter send · Ctrl+C exit",
   ];
   if (workspace) lines.push(`Workspace: ${workspace}`);
   return lines.join("\n");
