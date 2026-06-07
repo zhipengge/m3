@@ -41,6 +41,13 @@ export class QueryEngine {
         this.options.agent.sandbox?.allowReadOutside ?? DEFAULT_SANDBOX.allowReadOutside,
     };
     const { tools, systemPrompt } = await collectTools(this.options.agent);
+    // C7: layer in project-memory (CLAUDE.md / AGENTS.md) on top
+    // of the tool-derived system prompt. The two are independent
+    // concerns — skills / MCP / memory each contribute their own
+    // fragment; project memory is filesystem-based and a
+    // user-controlled override surface.
+    const { loadProjectMemory } = await import("../project-memory.js");
+    const projectMem = loadProjectMemory({ cwd: this.options.agent.cwd });
 
     const loop = runQueryLoopSafe({
       prompt: params.prompt,
@@ -55,7 +62,7 @@ export class QueryEngine {
       resumeMessages,
       sandbox,
       bashEnvAllow: this.options.agent.sandbox?.bashEnvAllow,
-      extraSystem: systemPrompt || undefined,
+      extraSystem: [systemPrompt, projectMem.block].filter(Boolean).join("\n\n") || undefined,
       permissionHandler: params.permissionHandler,
       attachments: params.attachments,
       allowPatterns: this.options.agent.permissions?.allow ?? [],
