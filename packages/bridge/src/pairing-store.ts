@@ -1,7 +1,6 @@
 import fs from "node:fs";
-import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { expandHome } from "@m3/config";
+import { atomicWriteFileSync, expandHome } from "@m3/config";
 
 export type PairingRecord = {
   channel: string;
@@ -87,13 +86,11 @@ export class PairingStore {
 
   private persist(): void {
     const resolved = expandHome(this.dbPath);
-    fs.mkdirSync(path.dirname(resolved), { recursive: true });
-    // Atomic write via tmp + rename. Prevents a partial write from
-    // leaving a corrupt file that load() would silently turn into
-    // an empty store, losing every paired peer in one bad write.
-    const tmp = `${resolved}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2));
-    fs.renameSync(tmp, resolved);
+    // Atomic write at 0o600 via the shared helper. Pairing codes are
+    // 24h-valid credentials; an interrupted write could otherwise
+    // corrupt the JSON, and the default umask on a multi-user host
+    // would let other users read the codes.
+    atomicWriteFileSync(resolved, JSON.stringify(this.data, null, 2));
   }
 
   getOrCreate(channel: string, accountId: string, peerId: string): PairingRecord {

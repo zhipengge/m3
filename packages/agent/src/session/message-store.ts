@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { expandHome } from "@m3/config";
+import { atomicWriteFileSync, expandHome } from "@m3/config";
 import type { HarnessMessage } from "../harness/types.js";
 
 type SessionRecord = {
@@ -41,27 +41,15 @@ export class SessionMessageStore {
 
   save(sessionId: string, messages: HarnessMessage[]): void {
     const fp = this.filePath(sessionId);
-    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    // Transcripts contain the full conversation, which routinely
+    // includes pasted API keys, file paths under $HOME, and tool
+    // output we may not want other users on the host to read. Write
+    // atomically at 0o600 via the shared helper.
     const record: SessionRecord = {
       sessionId,
       messages,
       updatedAt: new Date().toISOString(),
     };
-    // Atomic write: dump to a unique tmp file then rename. A power loss
-    // or crash mid-write will leave the tmp around but the canonical
-    // file untouched, so load() can still read the previous good copy.
-    const tmp = `${fp}.${process.pid}.${Date.now()}.tmp`;
-    try {
-      fs.writeFileSync(tmp, JSON.stringify(record, null, 2));
-      fs.renameSync(tmp, fp);
-    } catch (err) {
-      // Best-effort cleanup so we don't leave stray .tmp files behind.
-      try {
-        fs.unlinkSync(tmp);
-      } catch {
-        /* tmp was never created */
-      }
-      throw err;
-    }
+    atomicWriteFileSync(fp, JSON.stringify(record, null, 2));
   }
 }
