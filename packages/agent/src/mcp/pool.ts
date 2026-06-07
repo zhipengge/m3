@@ -38,10 +38,19 @@ export async function connectMcpServer(id: string, entry: McpServerEntry): Promi
     throw new Error(`MCP server "${id}": command required for stdio transport`);
   }
 
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (v !== undefined) env[k] = v;
-  }
+  // Env isolation: MCP stdio children are user-defined third-party code
+  // and MUST NOT inherit the parent process's secrets (API keys, GitHub
+  // tokens, *_PROXY, *_SECRET, etc.) just by being on PATH. The previous
+  // implementation copied the entire `process.env` and was a one-line
+  // RCE-prelude for any malicious MCP server. We start from `{}` and
+  // pass only a minimal allowlist (the bare essentials to spawn a child)
+  // plus the server's own `entry.env` overrides.
+  const env: Record<string, string> = {
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    HOME: process.env.HOME ?? "",
+    LANG: process.env.LANG ?? "C.UTF-8",
+    TMPDIR: process.env.TMPDIR ?? "/tmp",
+  };
   if (entry.env) {
     for (const [k, v] of Object.entries(entry.env)) env[k] = v;
   }
