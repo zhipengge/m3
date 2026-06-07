@@ -1,7 +1,12 @@
 import { z } from "zod";
 
 /** Provider API adapter — m3-owned, not Claude settings.json */
-export const ProviderApiSchema = z.enum(["openai-chat", "anthropic-messages"]);
+export const ProviderApiSchema = z.enum([
+  "openai-chat",
+  "anthropic-messages",
+  // C2: the cascade meta-provider (local-first, escalates to cloud).
+  "cascade",
+]);
 
 export const ModelEntrySchema = z.object({
   alias: z.string().optional(),

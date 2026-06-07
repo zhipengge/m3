@@ -2,6 +2,10 @@ import type { ProviderApi } from "@m3/config";
 import { AnthropicLlmProvider } from "./anthropic-provider.js";
 import { OpenAiChatProvider } from "./openai-provider.js";
 import type { LlmProvider } from "./types.js";
+import {
+  CascadeLlmProvider,
+  type CascadeOpts,
+} from "./cascade-provider.js";
 
 const anthropic = new AnthropicLlmProvider();
 const openai = new OpenAiChatProvider();
@@ -48,7 +52,22 @@ export function getLlmProvider(api: ProviderApi): LlmProvider {
   }
 }
 
+/**
+ * Register the cascade provider, which calls a local LLM first and
+ * escalates to a cloud LLM on tool_use or short-response signals.
+ * Convenience wrapper so callers don't have to instantiate the
+ * CascadeLlmProvider themselves.
+ */
+export function registerCascadeProvider(
+  local: LlmProvider,
+  cloud: LlmProvider,
+  opts: CascadeOpts = {},
+): void {
+  registerLlmProvider("cascade", new CascadeLlmProvider(local, cloud, opts));
+}
+
 export type { LlmProvider, LlmTurnParams, LlmTurnResult } from "./types.js";
 export { DEFAULT_SYSTEM_PROMPT } from "./types.js";
 export { AnthropicLlmProvider } from "./anthropic-provider.js";
 export { OpenAiChatProvider } from "./openai-provider.js";
+export { CascadeLlmProvider, type CascadeOpts, type CascadeLlmResult } from "./cascade-provider.js";
