@@ -1,6 +1,9 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import { Box, Text } from "ink";
-import type { SlashCommandSpec } from "@m3/commands";
+import {
+  groupSlashCommandsByCategory,
+  type SlashCommandSpec,
+} from "@m3/commands";
 import { paletteViewport } from "../palette-viewport.js";
 import { theme } from "../theme.js";
 
@@ -9,7 +12,7 @@ import { theme } from "../theme.js";
  * selected row is always visible — users can ↓/↑ past the first page without
  * losing access to commands further down the list.
  */
-const PALETTE_MAX_VISIBLE = 8;
+const PALETTE_MAX_VISIBLE = 12;
 
 type Props = {
   specs: SlashCommandSpec[];
@@ -36,8 +39,28 @@ function SlashPaletteImpl(props: Props) {
   // Clamp the incoming selection so a stale index (e.g. filter just shrank
   // the list) doesn't drag the viewport off the end.
   const safeSelected = Math.max(0, Math.min(selected, specs.length - 1));
-  const { start, end, above, below } = paletteViewport(specs.length, safeSelected, PALETTE_MAX_VISIBLE);
-  const visible = specs.slice(start, end);
+
+  // Group by category, then flatten with category headers as separators.
+  // We do this once per render via useMemo (cheap; specs is stable per palette
+  // open). The viewport math still runs over the flat list so scroll
+  // behaviour is unchanged.
+  const groups = useMemo(() => groupSlashCommandsByCategory(specs), [specs]);
+  const flat = useMemo(() => {
+    const entries: Array<
+      | { kind: "header"; label: string }
+      | { kind: "spec"; spec: SlashCommandSpec; index: number }
+    > = [];
+    for (const g of groups) {
+      entries.push({ kind: "header", label: g.category });
+      for (const s of g.specs) {
+        entries.push({ kind: "spec", spec: s, index: specs.indexOf(s) });
+      }
+    }
+    return entries;
+  }, [groups, specs]);
+
+  const { start, end, above, below } = paletteViewport(flat.length, safeSelected, PALETTE_MAX_VISIBLE);
+  const visible = flat.slice(start, end);
 
   return (
     <Box
@@ -57,8 +80,16 @@ function SlashPaletteImpl(props: Props) {
       </Text>
       <Text dimColor>↑↓ select · Enter apply · Esc close · Tab complete</Text>
       {above > 0 ? <Text dimColor>  ↑ {above} more</Text> : null}
-      {visible.map((spec, i) => {
-        const realIndex = start + i;
+      {visible.map((entry, i) => {
+        if (entry.kind === "header") {
+          return (
+            <Text key={`h-${i}`} bold color={theme.brand}>
+              {`  ${entry.label}`}
+            </Text>
+          );
+        }
+        const realIndex = entry.index;
+        const spec = entry.spec;
         const active = realIndex === safeSelected;
         return (
           <Box key={spec.name} gap={1}>
