@@ -22,6 +22,7 @@ export * from "./permissions/types.js";
 export { PermissionManager, type PermissionHandler } from "./permissions/manager.js";
 export { SessionMessageStore } from "./session/message-store.js";
 export * from "./session/message-store.js";
+export { MemoryStore } from "./session/memory-store.js";
 export * from "./phase2-harness.js";
 export * from "./phase4-advanced.js";
 export * from "./legacy/cli-engine.js";
