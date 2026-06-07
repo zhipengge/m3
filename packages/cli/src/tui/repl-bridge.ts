@@ -14,8 +14,10 @@ export type ReplTokenUsage = {
   cacheRead?: number;
   cacheCreation?: number;
   /** Running totals for the whole session — the StatusBar reads these
-   *  to show "tok 12.4k (↑8.2k ↓4.2k)". */
-  cumulative: { input: number; output: number; total: number };
+   *  to show "tok 12.4k (↑8.2k ↓4.2k)". The cost cap enforcement
+   *  in repl-app.tsx reads cumulative.costUsd against the configured
+   *  agent.costCapUsd. */
+  cumulative: { input: number; output: number; total: number; costUsd?: number };
 };
 
 /** Bridges gateway webchat callbacks into the Ink REPL (no global state). */

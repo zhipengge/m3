@@ -42,6 +42,12 @@ export type ReplAppProps = {
    * runs unapproved.
    */
   channelPermissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan";
+  /**
+   * Per-session USD cost cap. When set, the REPL surfaces a warning
+   * at 90% and pauses the session at 100%, asking the user to
+   * type /cost continue to resume. `0` / undefined = no cap.
+   */
+  costCapUsd?: number;
   onSubmit: (line: string, media?: ReplMedia) => void | Promise<void>;
 };
 
@@ -109,6 +115,12 @@ export function ReplApp(props: ReplAppProps) {
     cacheRead?: number;
     cacheCreation?: number;
   } | null>(null);
+  /**
+   * Set when cumulative session cost crosses the configured
+   * `agent.costCapUsd`. While true, new turns are refused — the
+   * user has to /cost continue to resume. Cleared by that command.
+   */
+  const [costCapReached, setCostCapReached] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<ReplMedia>([]);
   const [thinkingExpanded, setThinkingExpandedState] = useState(
     () => props.initialThinkingExpanded ?? false,
@@ -395,10 +407,36 @@ export function ReplApp(props: ReplAppProps) {
         // recent turn's cacheRead — for prompt caching the latest
         // turn is the most informative signal.
         const cumulative = usage.cumulative;
+        // Cost-cap enforcement: the harness doesn't know about
+        // agent.costCapUsd, so the REPL is the right gate. We
+        // track the cumulative cost and warn at 90% / pause at
+        // 100% of the configured cap. A user who set a cap expects
+        // a hard stop; surprise overages are worse UX than the
+        // occasional "approve to continue" prompt.
+        const cap = props.costCapUsd;
+        const cost = cumulative.costUsd;
+        if (cap && cap > 0 && cost !== undefined) {
+          const ratio = cost / cap;
+          if (ratio >= 1 && !costCapReached) {
+            setCostCapReached(true);
+            pushCompleted({
+              id: nextId(),
+              role: "activity",
+              text: `🛑 Cost cap reached: $${cost.toFixed(4)} of $${cap.toFixed(2)} cap. Type /cost continue to keep going.`,
+            });
+          } else if (ratio >= 0.9 && ratio < 1) {
+            pushCompleted({
+              id: nextId(),
+              role: "activity",
+              text: `💰 Cost at 90% of cap ($${cost.toFixed(4)} / $${cap.toFixed(2)}). Run /compact to shrink context, or type /cost continue.`,
+            });
+          }
+        }
         setTokens({
           input: cumulative.input,
           output: cumulative.output,
           total: cumulative.total,
+          ...(cumulative.costUsd !== undefined ? { costUsd: cumulative.costUsd } : {}),
           ...(usage.cacheRead !== undefined ? { cacheRead: usage.cacheRead } : {}),
           ...(usage.cacheCreation !== undefined
             ? { cacheCreation: usage.cacheCreation }
@@ -483,6 +521,35 @@ export function ReplApp(props: ReplAppProps) {
       const trimmed = line.trim();
       if (!trimmed) return;
       const normalized = trimmed === "?" || trimmed === "？" ? "/help" : trimmed;
+      // /cost continue: clear the cap-reached gate. Without this
+      // the user is stuck — every prompt submission is refused.
+      // The cost is still visible in the StatusBar, so the user
+      // is reminded of the spend on every subsequent turn.
+      if (/^\/cost\s+continue$/i.test(normalized) && costCapReached) {
+        setCostCapReached(false);
+        pushCompleted({
+          id: nextId(),
+          role: "activity",
+          text: "Cost cap gate cleared. Subsequent turns will continue to spend; the cap will re-trigger at the next threshold.",
+        });
+        setInput("");
+        setPaletteIdx(0);
+        return;
+      }
+      // Cost cap reached — refuse all other input. The /cost
+      // continue branch above is the only escape. This is the
+      // "hard stop" half of the cost-cap UX; the "soft warning"
+      // half is the 90% toast inside onTokens.
+      if (costCapReached) {
+        pushCompleted({
+          id: nextId(),
+          role: "error",
+          text: `Cost cap reached ($${tokens?.costUsd?.toFixed(4) ?? "?"} of $${props.costCapUsd?.toFixed(2) ?? "?"}). Type /cost continue to resume.`,
+        });
+        setInput("");
+        setPaletteIdx(0);
+        return;
+      }
       if (handleThinkingSlash(normalized)) {
         setInput("");
         setPaletteIdx(0);

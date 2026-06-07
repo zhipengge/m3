@@ -87,7 +87,7 @@ export type HarnessEvent =
       costUsd?: number;
       /** Running total across the whole session (so consumers don't
        * need to accumulate themselves). Reset on /clear. */
-      cumulative: { input: number; output: number; total: number };
+      cumulative: { input: number; output: number; total: number; costUsd?: number };
     };
 
 export type QueryLoopOptions = {

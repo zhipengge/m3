@@ -60,7 +60,7 @@ export async function* runQueryLoop(
   // Running session-level token totals. The harness has no notion of a
   // session boundary so the loop just accumulates; the bridge layer
   // resets this on /clear.
-  const sessionTokens = { input: 0, output: 0, total: 0 };
+  const sessionTokens = { input: 0, output: 0, total: 0, costUsd: 0 };
   const llm = getLlmProvider(options.model.api);
 
   const toolCtx = {
@@ -168,6 +168,9 @@ export async function* runQueryLoop(
       sessionTokens.input += turn.usage.input;
       sessionTokens.output += turn.usage.output;
       sessionTokens.total += turn.usage.total;
+      if (turn.usage.costUsd !== undefined) {
+        sessionTokens.costUsd += turn.usage.costUsd;
+      }
       const u = turn.usage;
       yield {
         type: "token_usage",

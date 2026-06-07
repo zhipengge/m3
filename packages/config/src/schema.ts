@@ -66,6 +66,14 @@ export const AgentConfigSchema = z.object({
       bashEnvAllow: z.array(z.string()).default([]),
     })
     .default({}),
+  /**
+   * Per-session USD cost cap. When cumulative session cost crosses
+   * 90% of this number, the REPL toasts a warning and proposes an
+   * auto-/compact. At 100% the REPL pauses and asks the user to
+   * type /cost continue before allowing any more turns. `0` or
+   * undefined means no cap.
+   */
+  costCapUsd: z.number().nonnegative().optional(),
 });
 
 export const ChannelAccountSchema = z.record(
