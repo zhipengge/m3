@@ -106,4 +106,26 @@ describe("buildStatusBarText", () => {
     });
     expect(out).toContain("$12.5");
   });
+
+  it("shows cache hit % when cacheRead is present", () => {
+    const out = buildStatusBarText({
+      model: "m",
+      tokens: { input: 200, output: 100, total: 300, cacheRead: 800 },
+    });
+    // 800 / (200 + 800) = 80%
+    expect(out).toMatch(/↻ 80%/);
+  });
+
+  it("omits cache hit % when cacheRead is zero / undefined", () => {
+    const out1 = buildStatusBarText({
+      model: "m",
+      tokens: { input: 200, output: 100, total: 300 },
+    });
+    const out2 = buildStatusBarText({
+      model: "m",
+      tokens: { input: 200, output: 100, total: 300, cacheRead: 0 },
+    });
+    expect(out1).not.toContain("↻");
+    expect(out2).not.toContain("↻");
+  });
 });

@@ -90,6 +90,8 @@ export function ReplApp(props: ReplAppProps) {
     output: number;
     total: number;
     costUsd?: number;
+    cacheRead?: number;
+    cacheCreation?: number;
   } | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<ReplMedia>([]);
   const [thinkingExpanded, setThinkingExpandedState] = useState(
@@ -359,7 +361,23 @@ export function ReplApp(props: ReplAppProps) {
         });
       },
       onTokens(usage) {
-        setTokens(usage.cumulative);
+        // Plumb cacheRead/cacheCreation through to the StatusBar so
+        // the user can see prompt-cache hit rate. The harness emits
+        // these per turn (HarnessEvent.token_usage carries both);
+        // the REPL just wasn't surfacing them. We keep the most
+        // recent turn's cacheRead — for prompt caching the latest
+        // turn is the most informative signal.
+        const cumulative = usage.cumulative;
+        setTokens({
+          input: cumulative.input,
+          output: cumulative.output,
+          total: cumulative.total,
+          ...(cumulative.costUsd !== undefined ? { costUsd: cumulative.costUsd } : {}),
+          ...(usage.cacheRead !== undefined ? { cacheRead: usage.cacheRead } : {}),
+          ...(usage.cacheCreation !== undefined
+            ? { cacheCreation: usage.cacheCreation }
+            : {}),
+        });
       },
       onContextCompressed(info: { keptMessages: number; summarizedTurns: number }) {
         // Toast the user with a one-liner so they know context just

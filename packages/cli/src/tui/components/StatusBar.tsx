@@ -10,7 +10,17 @@ type Props = {
   dashboardUrl?: string;
   /** Cumulative session token usage. When undefined, the bar omits the
    *  token segment entirely (so a fresh session doesn't show "tok 0"). */
-  tokens?: { input: number; output: number; total: number; costUsd?: number };
+  tokens?: {
+    input: number;
+    output: number;
+    total: number;
+    costUsd?: number;
+    /** Tokens served from provider cache (Anthropic, MiniMax) — shown
+     *  as a ↻ hit % so the user can see the prompt cache doing work. */
+    cacheRead?: number;
+    /** Tokens written to provider cache (Anthropic cache_creation). */
+    cacheCreation?: number;
+  };
   /** Session wall-clock duration since startup, in ms. */
   sessionMs?: number;
   /** Total tool calls made this session. */
@@ -51,6 +61,18 @@ function fmtCost(usd: number): string {
   return `$${usd.toFixed(1)}`;
 }
 
+/**
+ * Prompt-cache hit rate, as a percentage of `cacheRead / (input +
+ * cacheRead)`. Returns null when there's no cache signal at all
+ * (older providers, mock engine) so the caller can skip the segment.
+ */
+export function cacheHitPct(tokens: NonNullable<Props["tokens"]>): number | null {
+  if (tokens.cacheRead === undefined || tokens.cacheRead === 0) return null;
+  const denom = tokens.input + tokens.cacheRead;
+  if (denom === 0) return null;
+  return Math.round((tokens.cacheRead / denom) * 100);
+}
+
 export function buildStatusBarText(props: Props): string {
   const parts: string[] = [];
   if (props.model) parts.push(props.model);
@@ -59,6 +81,8 @@ export function buildStatusBarText(props: Props): string {
       `tok ${fmtTokens(props.tokens.total)} ` +
         `(↑${fmtTokens(props.tokens.input)} ↓${fmtTokens(props.tokens.output)})`,
     );
+    const hit = cacheHitPct(props.tokens);
+    if (hit !== null) parts.push(`↻ ${hit}%`);
     if (props.tokens.costUsd !== undefined && props.tokens.costUsd > 0) {
       parts.push(`cost ${fmtCost(props.tokens.costUsd)}`);
     }
@@ -102,6 +126,18 @@ function StatusBarImpl(props: Props) {
           `(↑${fmtTokens(props.tokens.input)} ↓${fmtTokens(props.tokens.output)})`}
       </Text>,
     );
+    const hit = cacheHitPct(props.tokens);
+    if (hit !== null) {
+      // High cache hit = brand color (good); low hit = muted. A
+      // first-time session will be 0% by definition so this naturally
+      // starts quiet and lights up once prompt caching kicks in.
+      const hitColor = hit >= 70 ? theme.brand : hit >= 30 ? theme.muted : theme.muted;
+      parts.push(
+        <Text key="cache" color={hitColor} wrap="truncate-end">
+          {`↻ ${hit}%`}
+        </Text>,
+      );
+    }
     if (props.tokens.costUsd !== undefined && props.tokens.costUsd > 0) {
       parts.push(
         <Text key="cost" color={theme.brand} wrap="truncate-end">
