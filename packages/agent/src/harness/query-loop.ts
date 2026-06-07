@@ -20,7 +20,11 @@ class StreamWake extends Error {
 export async function* runQueryLoop(
   options: QueryLoopOptions,
 ): AsyncGenerator<HarnessEvent, QueryLoopResult> {
-  const permissions = new PermissionManager(options.permissionMode);
+  const permissions = new PermissionManager(
+    options.permissionMode,
+    options.allowPatterns ?? [],
+    options.denyPatterns ?? [],
+  );
   if (options.permissionHandler) {
     permissions.setHandler(options.permissionHandler);
   }

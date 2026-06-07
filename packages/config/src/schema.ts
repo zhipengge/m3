@@ -74,6 +74,26 @@ export const AgentConfigSchema = z.object({
    * undefined means no cap.
    */
   costCapUsd: z.number().nonnegative().optional(),
+  /**
+   * B10: per-tool allow/deny pattern lists. The pattern grammar
+   * is one of:
+   *
+   *   "Read"              — exact name match
+   *   "Read(/path/*)"     — name match + input substring match
+   *   "Bash(/regex/flags)" — name match + input regex match
+   *
+   * Evaluated before the permission manager's normal ask flow:
+   * deny rules win (short-circuit to "deny"), then allow rules
+   * (short-circuit to "allow"), otherwise the normal mode applies.
+   * A user with `permissions.allow: ["Read"]` and mode "default"
+   * will only ever be asked about non-Read tools.
+   */
+  permissions: z
+    .object({
+      allow: z.array(z.string()).default([]),
+      deny: z.array(z.string()).default([]),
+    })
+    .optional(),
 });
 
 export const ChannelAccountSchema = z.record(

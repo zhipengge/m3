@@ -58,6 +58,8 @@ export class QueryEngine {
       extraSystem: systemPrompt || undefined,
       permissionHandler: params.permissionHandler,
       attachments: params.attachments,
+      allowPatterns: this.options.agent.permissions?.allow ?? [],
+      denyPatterns: this.options.agent.permissions?.deny ?? [],
     });
 
     let result = await loop.next();

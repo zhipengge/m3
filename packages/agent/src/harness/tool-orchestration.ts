@@ -82,6 +82,7 @@ async function runSingleTool(
   const description = describeToolCall(tool.name, input);
   const decision = await permissions.canUseTool({
     toolName: tool.name,
+    toolInput: block.input,
     isReadOnly: Boolean(tool.isReadOnly),
     needsPermission: Boolean(tool.needsPermission),
     description,

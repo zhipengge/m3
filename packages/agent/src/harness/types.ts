@@ -115,6 +115,13 @@ export type QueryLoopOptions = {
    * to `ContentBlock[]` with one text + one image block per attachment.
    */
   attachments?: Array<{ type: "image" | "file"; path: string; mimeType?: string }>;
+  /**
+   * B10: user-declared allow/deny pattern lists (from
+   * agent.permissions in m3.json). Forwarded to the
+   * PermissionManager which evaluates them before the mode check.
+   */
+  allowPatterns?: string[];
+  denyPatterns?: string[];
 };
 
 export type QueryLoopResult = {
