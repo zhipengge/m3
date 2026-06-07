@@ -207,6 +207,12 @@ export async function runFeishuScanSetup(options?: {
             appSecret: body.appSecret.trim(),
             dmPolicy: "open",
             allowFrom: ["*"],
+            // C1: when the user pins the account to a local model
+            // we also flip localOnly. The scan-setup form is the
+            // easiest place to do this pairing — a user opting
+            // into a local-provider override clearly wants the
+            // privacy guarantee that comes with it.
+            localOnly: false,
           };
           // saveConfig now writes atomically at 0o600 (see
           // @m3/config's atomicWriteFileSync helper).

@@ -77,6 +77,28 @@ function isSenderAllowed(
 export class MessagePipeline {
   private readonly pairingStore: PairingStore;
   private readonly sessionLock: SessionLock;
+  /**
+   * C1: resolve account-scoped provider config (provider ref +
+   * localOnly flag) for a given (channel, account) pair. Returns
+   * the defaults (no provider, not localOnly) when the channel or
+   * account isn't in m3.json.
+   */
+  private accountProviderConfig(
+    channelId: string,
+    accountId: string,
+  ): { provider?: string; localOnly: boolean } {
+    const ch = (this.options.config.channels as Record<string, unknown>)[channelId] as
+      | Record<string, { provider?: string; localOnly?: boolean }>
+      | undefined;
+    if (!ch) return { localOnly: false };
+    const acc = ch[accountId];
+    if (!acc) return { localOnly: false };
+    return {
+      provider: acc.provider,
+      localOnly: Boolean(acc.localOnly),
+    };
+  }
+
   private readonly transcriptStore = new SessionMessageStore();
   private readonly goalStore = new GoalStore();
 
@@ -190,11 +212,29 @@ export class MessagePipeline {
       let contextUsageRatio: number | undefined;
       try {
         const secrets = loadSecrets();
-        const resolved = resolveModel(
-          this.options.config,
-          secrets,
-          this.options.config.agent.model,
+        // C1: account-scoped provider override. If this
+        // (channel, accountId) pair has a `provider` set in
+        // m3.json, use that as the model ref instead of the
+        // global `agent.model`. Combined with `localOnly: true`,
+        // this is the privacy-mode-channel primitive: a
+        // customer-support Feishu account can be pinned to a
+        // local model with a hard guard against cloud fallback.
+        const accountConfig = this.accountProviderConfig(
+          finalized.channelId,
+          finalized.accountId,
         );
+        const modelRef = accountConfig.provider ?? this.options.config.agent.model;
+        const resolved = resolveModel(this.options.config, secrets, modelRef);
+        if (accountConfig.localOnly && !resolved.api.startsWith("local/")) {
+          // Guard: refuse to use a non-local provider when the
+          // account is flagged localOnly. Surfaces in the reply
+          // so a misconfigured account doesn't silently degrade
+          // to a cloud LLM.
+          await dispatcher.deliver({
+            text: `Account ${finalized.channelId}:${finalized.accountId} is localOnly but the resolved model "${modelRef}" is not a local provider. Refusing to send data. Check m3.json → channels.<ch>.<acc>.provider.`,
+          });
+          return;
+        }
         contextUsageRatio = estimateContextUsageRatio({
           messages: priorMessages,
           maxContextTokens: resolved.maxContextTokens,
