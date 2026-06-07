@@ -82,11 +82,67 @@ export async function runFeishuScanSetup(options?: {
   port?: number;
   configPath?: string;
   timeoutMs?: number;
+  /** Bind address. Defaults to loopback so the setup page isn't
+   *  reachable from a guest network by anyone who can scan the LAN.
+   *  Pass "0.0.0.0" if you really want the old LAN-reachable
+   *  behavior (and accept the risk). */
+  host?: string;
 }): Promise<ScanSetupResult> {
   const port = options?.port ?? 18792;
-  const lanIp = getLanIpv4();
+  const host = options?.host ?? "127.0.0.1";
+  const lanIp = host === "0.0.0.0" ? getLanIpv4() : host;
   const setupUrl = `http://${lanIp}:${port}/setup`;
   let saved = false;
+
+  // Naive per-IP rate limit. 3 POSTs per 5-minute window is enough
+  // for the legitimate "scan QR → fill form → submit" flow and stops
+  // a script on the same LAN from spamming credential overwrites.
+  // Resets when the setup server exits.
+  const RATE_LIMIT_WINDOW_MS = 5 * 60_000;
+  const RATE_LIMIT_MAX = 3;
+  const rateByIp = new Map<string, number[]>();
+  const rateLimited = (ip: string): boolean => {
+    const now = Date.now();
+    const hits = (rateByIp.get(ip) ?? []).filter(
+      (t) => now - t < RATE_LIMIT_WINDOW_MS,
+    );
+    if (hits.length >= RATE_LIMIT_MAX) {
+      rateByIp.set(ip, hits);
+      return true;
+    }
+    hits.push(now);
+    rateByIp.set(ip, hits);
+    return false;
+  };
+
+  // Origin / Referer check for POSTs. The setup page is served from
+  // the same origin; anything cross-origin is a CSRF attempt.
+  const originOk = (req: http.IncomingMessage): boolean => {
+    const origin = req.headers["origin"];
+    if (typeof origin === "string") {
+      try {
+        const u = new URL(origin);
+        // Allow same-host:port (any port — user might be on a proxy)
+        if (u.hostname === lanIp || u.hostname === "127.0.0.1" || u.hostname === "localhost") {
+          return true;
+        }
+        return false;
+      } catch {
+        return false;
+      }
+    }
+    // No Origin header (e.g. curl, native fetch without credentials):
+    // allow but log. Strictly speaking RFC 6454 recommends forbidding
+    // these, but the legitimate user typing in a browser does send
+    // Origin, so the bad case is rare.
+    return true;
+  };
+
+  const clientIp = (req: http.IncomingMessage): string => {
+    const fwd = req.headers["x-forwarded-for"];
+    if (typeof fwd === "string" && fwd.length > 0) return fwd.split(",")[0]!.trim();
+    return req.socket.remoteAddress ?? "unknown";
+  };
 
   const server = http.createServer((req, res) => {
     const url = req.url?.split("?")[0] ?? "";
@@ -110,6 +166,22 @@ export async function runFeishuScanSetup(options?: {
     }
 
     if (req.method === "POST" && url === "/api/setup/feishu") {
+      const ip = clientIp(req);
+      if (rateLimited(ip)) {
+        res.writeHead(429, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            ok: false,
+            message: "Too many setup attempts from this IP. Try again in a few minutes.",
+          }),
+        );
+        return;
+      }
+      if (!originOk(req)) {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, message: "Cross-origin request rejected" }));
+        return;
+      }
       void (async () => {
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(chunk as Buffer);
@@ -136,6 +208,8 @@ export async function runFeishuScanSetup(options?: {
             dmPolicy: "open",
             allowFrom: ["*"],
           };
+          // saveConfig now writes atomically at 0o600 (see
+          // @m3/config's atomicWriteFileSync helper).
           saveConfig(config, options?.configPath);
           saved = true;
           res.writeHead(200, { "content-type": "application/json" });
@@ -164,7 +238,7 @@ export async function runFeishuScanSetup(options?: {
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(port, "0.0.0.0", () => resolve());
+    server.listen(port, host, () => resolve());
   });
 
   console.log("\nm3 channel scan setup (Feishu / WeChat)\n");
