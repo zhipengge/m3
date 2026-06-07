@@ -48,6 +48,8 @@ export class QueryEngine {
     // user-controlled override surface.
     const { loadProjectMemory } = await import("../project-memory.js");
     const projectMem = loadProjectMemory({ cwd: this.options.agent.cwd });
+    const { SnapshotStore } = await import("../session/snapshot-store.js");
+    const snapshots = new SnapshotStore();
 
     const loop = runQueryLoopSafe({
       prompt: params.prompt,
@@ -84,6 +86,20 @@ export class QueryEngine {
       throw new Error("agent run exited without producing a result");
     }
     this.store.save(sessionId, finalResult.messages);
+    // Auto-snapshot every 10 turns — the snapshot copy is cheap
+    // (one file write per N turns) and gives the user a /rewind
+    // escape hatch if the agent wandered. The store is no-op
+    // safe — a write failure here is logged but doesn't break
+    // the agent run.
+    try {
+      if (finalResult.turns > 0 && finalResult.turns % 10 === 0) {
+        snapshots.save(sessionId, finalResult.turns, finalResult.messages, "auto");
+      }
+    } catch (err) {
+      process.stderr.write(
+        `[m3] snapshot save failed: ${err instanceof Error ? err.message : err}\n`,
+      );
+    }
     return { text: finalResult.text, sessionId };
   }
 }
