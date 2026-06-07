@@ -2,6 +2,7 @@ import type { ChannelAccountSnapshot } from "@m3/channels";
 import type { PairingRecord, SessionMapping } from "@m3/bridge";
 import type { LogEntry } from "./event-log.js";
 import type { SystemInfoPayload } from "./system-info.js";
+import { verifyGatewayToken, writeUnauthorized } from "./auth.js";
 
 export const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -99,6 +100,13 @@ tick();setInterval(tick,3000);
 export type ControlUiContext = {
   startedAt: number;
   version: string;
+  /**
+   * When set, every control-UI endpoint (the HTML page and all
+   * `/api/*` JSON routes) requires the matching bearer token. When
+   * unset, the UI is reachable from anyone who can open a TCP
+   * connection — the caller is responsible for binding to loopback.
+   */
+  authToken?: string;
   getChannels: () => ChannelAccountSnapshot[];
   getSessions: () => SessionMapping[];
   getSystem: () => SystemInfoPayload;
@@ -112,6 +120,18 @@ export function handleControlHttp(
   ctx: ControlUiContext,
 ): boolean {
   const url = req.url?.split("?")[0] ?? "";
+
+  // Auth gate. When an authToken is configured, every control-UI
+  // route requires it via the Authorization: Bearer header or the
+  // ?token= query param. Without a token, the dashboard was world-
+  // readable whenever the gateway was bound to a non-loopback
+  // address — session keys, pairing codes, system info, and the
+  // event log all leaked. /health is intentionally not gated here
+  // (load balancers need it).
+  if (ctx.authToken && !verifyGatewayToken(req, ctx.authToken)) {
+    writeUnauthorized(res);
+    return true;
+  }
 
   if (req.method === "GET" && (url === "/" || url === "/dashboard")) {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
