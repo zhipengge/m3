@@ -15,6 +15,7 @@ export type StreamAdapterOptions = {
     cacheCreation?: number;
     cumulative: { input: number; output: number; total: number };
   }) => void;
+  onContextCompressed?: (info: { keptMessages: number; summarizedTurns: number }) => void;
   onToolUse?: (info: { id: string; name: string; input: unknown }) => void;
   onToolResult?: (info: {
     id: string;
@@ -114,11 +115,14 @@ export class StreamAdapter {
         }
         break;
       case "context_compressed": {
-        // Only surface through ONE channel — sending to both onSystemNotice
-        // and dispatcher.deliver used to double-render in Feishu (which
-        // forwards system notices to the user) and Slack (which has its
-        // own system event channel). The dispatcher is the single source
-        // of truth for user-visible output.
+        // Surface through the dedicated TUI handler so the activity
+        // footer can render a `🗜 compressed N → M` toast. We still
+        // emit a system notice for non-TUI channels (Feishu / Slack)
+        // that don't have a context-compressed callback.
+        this.options.onContextCompressed?.({
+          keptMessages: event.keptMessages,
+          summarizedTurns: event.summarizedTurns,
+        });
         const msg = `(context compressed: ${event.summarizedTurns} earlier turn(s) summarized, ${event.keptMessages} message(s) kept)`;
         this.options.onSystemNotice?.(msg);
         break;

@@ -334,6 +334,16 @@ export function ReplApp(props: ReplAppProps) {
       onTokens(usage) {
         setTokens(usage.cumulative);
       },
+      onContextCompressed(info: { keptMessages: number; summarizedTurns: number }) {
+        // Toast the user with a one-liner so they know context just
+        // shrank and roughly by how much. The StatusBar ctx% bar
+        // updates implicitly via the next /status event.
+        pushCompleted({
+          id: nextId(),
+          role: "activity",
+          text: `🗜 compressed ${info.summarizedTurns} earlier turn${info.summarizedTurns === 1 ? "" : "s"} → ${info.keptMessages} message${info.keptMessages === 1 ? "" : "s"} kept`,
+        });
+      },
     }),
     [finalizeLiveThinking, pushCompleted],
   );
