@@ -27,6 +27,7 @@ import {
   applyCommandResult,
   CommandBridge,
   isClearSessionCommand,
+  isClearUndoCommand,
   isCompactSessionCommand,
   isReplyOnlyCommand,
 } from "./command-bridge.js";
@@ -219,9 +220,38 @@ export class MessagePipeline {
         this.options.sessionMapper.remove(route.sessionKey);
         this.goalStore.clear(route.sessionKey);
         if (mapping?.claudeSessionId) {
-          this.transcriptStore.clear(mapping.claudeSessionId);
+          if (cmdResult.hard) {
+            // Legacy behavior: unlink. The user explicitly opted in
+            // with `/clear hard` so we don't second-guess.
+            this.transcriptStore.clear(mapping.claudeSessionId);
+            await dispatcher.deliver({ text: "Session context cleared (hard delete)." });
+          } else {
+            // Default: soft-delete to _archive/. Recoverable with
+            // `/clear undo`. The archive path is returned so the
+            // channel can show the user where to find it (e.g. a
+            // /status row, or in TUI mode a "to recover:" line).
+            const archivePath = this.transcriptStore.archive(mapping.claudeSessionId);
+            const where = archivePath ? ` (archived to ${archivePath})` : "";
+            await dispatcher.deliver({
+              text: `Session context cleared${where}. Recover with /clear undo.`,
+            });
+          }
+        } else {
+          await dispatcher.deliver({ text: "Session context cleared." });
         }
-        await dispatcher.deliver({ text: "Session context cleared." });
+        return;
+      }
+      if (cmdResult && isClearUndoCommand(cmdResult)) {
+        if (mapping?.claudeSessionId) {
+          const restored = this.transcriptStore.restoreLatestArchive(mapping.claudeSessionId);
+          await dispatcher.deliver({
+            text: restored
+              ? "Session context restored from archive."
+              : "Nothing to restore (no archive for this session).",
+          });
+        } else {
+          await dispatcher.deliver({ text: "No active session to restore." });
+        }
         return;
       }
       if (cmdResult && isCompactSessionCommand(cmdResult)) {

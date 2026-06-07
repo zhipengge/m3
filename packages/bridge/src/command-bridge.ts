@@ -50,8 +50,16 @@ export function isReplyOnlyCommand(result: CommandResult): boolean {
   return result.action === "reply_only";
 }
 
-export function isClearSessionCommand(result: CommandResult): boolean {
+export function isClearSessionCommand(
+  result: CommandResult,
+): result is Extract<CommandResult, { action: "clear_session" }> {
   return result.action === "clear_session";
+}
+
+export function isClearUndoCommand(
+  result: CommandResult,
+): result is Extract<CommandResult, { action: "clear_undo" }> {
+  return result.action === "clear_undo";
 }
 
 export function isCompactSessionCommand(result: CommandResult): boolean {

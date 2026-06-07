@@ -497,6 +497,14 @@ export function ReplApp(props: ReplAppProps) {
       if (/^\/(clear|reset|new)$/i.test(normalized)) {
         // Reset cumulative token usage on session reset.
         setTokens(null);
+        // Soft-delete hint (B1): the user can /clear undo to
+        // recover. Surfaced as a system row so it's visible
+        // without scrollback.
+        pushCompleted({
+          id: nextId(),
+          role: "system",
+          text: "Session context cleared (soft-delete). Use /clear undo to recover from ~/.m3/transcripts/_archive/.",
+        });
       }
       // Persist the submitted line to history before any UI mutation.
       historyRef.current?.push(normalized);

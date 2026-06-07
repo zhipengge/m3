@@ -16,6 +16,10 @@ export class SessionMessageStore {
     return path.join(expandHome(this.basePath), `${sessionId}.json`);
   }
 
+  private archiveDir(): string {
+    return path.join(expandHome(this.basePath), "_archive");
+  }
+
   load(sessionId: string): HarnessMessage[] {
     const fp = this.filePath(sessionId);
     if (!fs.existsSync(fp)) return [];
@@ -34,6 +38,56 @@ export class SessionMessageStore {
     }
   }
 
+  /**
+   * Move the transcript to `_archive/<ts>-<sid>.json` and return the
+   * archive path. Returns null if the transcript didn't exist.
+   *
+   * Used by /clear soft-delete (B1): the user can /clear undo to
+   * bring the file back. Hard delete is no longer the default
+   * because accidentally losing a long session is unrecoverable.
+   */
+  archive(sessionId: string): string | null {
+    const fp = this.filePath(sessionId);
+    if (!fs.existsSync(fp)) return null;
+    fs.mkdirSync(this.archiveDir(), { recursive: true });
+    const ts = Date.now();
+    const archivePath = path.join(this.archiveDir(), `${ts}-${sessionId}.json`);
+    fs.renameSync(fp, archivePath);
+    return archivePath;
+  }
+
+  /**
+   * Restore the most recent archived transcript for a given session
+   * id. Returns the restored sessionId on success, null if no
+   * archive was found.
+   *
+   * The convention is: /clear undo always restores the *most recent*
+   * archive (one-shot undo). For more control, expose `restoreArchive`
+   * via a future /clear list / /clear pick flow.
+   */
+  restoreLatestArchive(sessionId: string): string | null {
+    const dir = this.archiveDir();
+    if (!fs.existsSync(dir)) return null;
+    const matches = fs
+      .readdirSync(dir)
+      .filter((name) => name.endsWith(`-${sessionId}.json`))
+      .sort();
+    if (matches.length === 0) return null;
+    const latest = matches[matches.length - 1]!;
+    const from = path.join(dir, latest);
+    const to = this.filePath(sessionId);
+    // If the live transcript somehow re-appeared (e.g. an autosave
+    // during the archive window), bail rather than overwriting.
+    if (fs.existsSync(to)) return null;
+    fs.renameSync(from, to);
+    return sessionId;
+  }
+
+  /**
+   * Low-level: hard delete. Still supported for callers that want
+   * the old behavior (e.g. /clear --hard). The default `/clear`
+   * path uses archive() instead so the transcript is recoverable.
+   */
   clear(sessionId: string): void {
     const fp = this.filePath(sessionId);
     if (fs.existsSync(fp)) fs.unlinkSync(fp);

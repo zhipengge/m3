@@ -22,7 +22,8 @@ export type CommandContext = {
 export type CommandResult =
   | { action: "reply_only"; text: string }
   | { action: "inject_prompt"; prompt: string }
-  | { action: "clear_session" }
+  | { action: "clear_session"; hard?: boolean }
+  | { action: "clear_undo" }
   | { action: "compact_session"; focus?: string }
   | { action: "set_goal"; condition: string }
   | { action: "passthrough" };
@@ -98,8 +99,23 @@ const BUILTIN_COMMANDS: Record<string, CommandHandler> = {
     action: "reply_only",
     text: formatContextUsage(ctx),
   }),
-  clear: () => ({ action: "clear_session" }),
-  reset: () => ({ action: "clear_session" }),
+  clear: (args) => {
+    const arg = args.trim().toLowerCase();
+    if (arg === "undo") {
+      return { action: "clear_undo" };
+    }
+    if (arg === "hard" || arg === "--hard") {
+      // Force the legacy unlink semantics. Default is now soft-delete
+      // (archive + /clear undo) so accidental /clear isn't fatal.
+      return { action: "clear_session", hard: true };
+    }
+    return { action: "clear_session" };
+  },
+  reset: (args) => {
+    const arg = args.trim().toLowerCase();
+    if (arg === "undo") return { action: "clear_undo" };
+    return { action: "clear_session" };
+  },
   new: () => ({ action: "clear_session" }),
   compact: (args) => ({
     action: "compact_session",
