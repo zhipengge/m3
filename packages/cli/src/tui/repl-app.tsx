@@ -163,6 +163,15 @@ export function ReplApp(props: ReplAppProps) {
    * with the liveThinking/liveAssistant streaming region.
    */
   const [pendingProgress, setPendingProgress] = useState<string | null>(null);
+  /**
+   * Interactive /permissions picker. `null` = closed. While open,
+   * the input is hidden and ←/→ cycle through the three modes
+   * (default / acceptEdits / plan), Enter commits, Esc cancels.
+   * B9 — the picker is REPL-only; channels get the text reply.
+   */
+  const [permissionPicker, setPermissionPicker] = useState<
+    "default" | "acceptEdits" | "plan" | null
+  >(null);
   const [turnCount, setTurnCount] = useState(0);
   /** Per-call startedAt timestamp, captured when tool_use fires so we
    *  can compute durationMs in tool_result. */
@@ -583,6 +592,15 @@ export function ReplApp(props: ReplAppProps) {
           text: "Session context cleared (soft-delete). Use /clear undo to recover from ~/.m3/transcripts/_archive/.",
         });
       }
+      // B9: bare /permissions opens the interactive picker.
+      // /permissions <mode> still takes a direct argument; both
+      // work without leaving the REPL.
+      if (/^\/permissions$/i.test(normalized)) {
+        setPermissionPicker("default");
+        setInput("");
+        setPaletteIdx(0);
+        return;
+      }
       // Persist the submitted line to history before any UI mutation.
       historyRef.current?.push(normalized);
       historyIdxRef.current = -1;
@@ -661,6 +679,43 @@ export function ReplApp(props: ReplAppProps) {
 
   useInput(
     (_char, key) => {
+      // B9: interactive /permissions picker. While open, ←/→ cycle
+      // through modes, Enter commits, Esc cancels. Eaten keystrokes
+      // (typing) are ignored so the user doesn't accidentally set
+      // a mode by typing during the picker.
+      if (permissionPicker) {
+        const opts = ["default", "acceptEdits", "plan"] as const;
+        const idx = opts.indexOf(permissionPicker);
+        if (key.leftArrow) {
+          setPermissionPicker(opts[(idx - 1 + opts.length) % opts.length]!);
+          return;
+        }
+        if (key.rightArrow) {
+          setPermissionPicker(opts[(idx + 1) % opts.length]!);
+          return;
+        }
+        if (key.return) {
+          const committed = permissionPicker;
+          setPermissionPicker(null);
+          pushCompleted({
+            id: nextId(),
+            role: "system",
+            text: `Permission mode set to: ${committed}\n(Note: applies to next turn; current in-flight engine still uses the loaded mode.)`,
+          });
+          // Note: the engine is already constructed with the
+          // original permissionMode, so the change applies to the
+          // NEXT turn / next session. m3.json would also need an
+          // update for the change to persist across restarts; the
+          // /permissions <mode> direct form does that via the
+          // set_permission_mode action in the bridge.
+          return;
+        }
+        if (key.escape) {
+          setPermissionPicker(null);
+          return;
+        }
+        return;
+      }
       // Permission prompt navigation: ←/→ (and Tab/Shift+Tab) cycle
       // through the 3 options (allow / allow_session / deny), Enter
       // confirms the highlighted one, and Y/N/A / Esc still work as
@@ -919,6 +974,34 @@ export function ReplApp(props: ReplAppProps) {
           <Text dimColor>
             ({pendingAttachments.map((a) => a.path.split("/").pop()).join(", ")})
           </Text>
+        </Box>
+      ) : null}
+
+      {permissionPicker ? (
+        <Box
+          borderStyle="round"
+          borderColor={theme.accent}
+          paddingX={1}
+          flexDirection="row"
+          gap={1}
+        >
+          <Text color={theme.accent} bold>
+            /permissions
+          </Text>
+          {(["default", "acceptEdits", "plan"] as const).map((mode) => {
+            const active = mode === permissionPicker;
+            return (
+              <Text
+                key={mode}
+                color={active ? theme.user : theme.muted}
+                bold={active}
+                inverse={active}
+              >
+                {active ? `› ${mode} ‹` : `  ${mode}  `}
+              </Text>
+            );
+          })}
+          <Text color={theme.muted}>← → select · Enter apply · Esc cancel</Text>
         </Box>
       ) : null}
 

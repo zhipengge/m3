@@ -27,6 +27,7 @@ export type CommandResult =
   | { action: "compact_session"; focus?: string }
   | { action: "set_goal"; condition: string }
   | { action: "set_model"; model: string }
+  | { action: "set_permission_mode"; mode: "default" | "acceptEdits" | "plan" | "bypassPermissions" }
   | { action: "list_mcp_servers" }
   | { action: "passthrough" };
 
@@ -175,10 +176,23 @@ const BUILTIN_COMMANDS: Record<string, CommandHandler> = {
       model: query,
     };
   },
-  permissions: (_args, ctx) => ({
-    action: "reply_only",
-    text: `Permission mode: ${ctx.config.agent.permissionMode}\nChannel inbound: ${ctx.config.agent.channelPermissionMode ?? "bypassPermissions"}`,
-  }),
+  permissions: (args, ctx) => {
+    const arg = args.trim().toLowerCase();
+    if (arg === "default" || arg === "acceptedits" || arg === "plan" || arg === "bypasspermissions") {
+      const normalized = arg === "acceptedits" ? "acceptEdits" : arg === "bypasspermissions" ? "bypassPermissions" : arg;
+      return { action: "set_permission_mode", mode: normalized };
+    }
+    if (arg) {
+      return {
+        action: "reply_only",
+        text: `Unknown permission mode: ${arg}\nUsage: /permissions [default|acceptEdits|plan|bypassPermissions]`,
+      };
+    }
+    return {
+      action: "reply_only",
+      text: `Permission mode: ${ctx.config.agent.permissionMode}\nChannel inbound: ${ctx.config.agent.channelPermissionMode ?? "bypassPermissions"}\n\nUsage: /permissions [default|acceptEdits|plan|bypassPermissions]\nIn Ink REPL: type /permissions to open an interactive picker.`,
+    };
+  },
 };
 
 /** Phase 2: extended CC slash command registry. */

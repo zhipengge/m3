@@ -13,6 +13,7 @@ export * from "./tools/registry.js";
 export * from "./tools/tool-source.js";
 export * from "./mcp/config.js";
 export * from "./mcp/provider.js";
+export * from "./mcp/pool.js";
 export * from "./skills/loader.js";
 export * from "./skills/skill-tool.js";
 export * from "./security/workspace.js";
