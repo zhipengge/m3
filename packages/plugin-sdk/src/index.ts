@@ -29,3 +29,4 @@ export {
 
 export { helloPlugin } from "./bundled/hello-plugin.js";
 export { loadM3PluginsFromConfig } from "./load-plugins.js";
+export * from "./plugin-shas.js";

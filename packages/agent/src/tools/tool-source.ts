@@ -67,6 +67,34 @@ function dedupeByName(tools: ToolDefinition[]): ToolDefinition[] {
 }
 
 /**
+ * Enforce `config.tools` (the user-facing allowlist). When set to "*" or
+ * unset, returns the input unchanged. When set to a string array, keeps
+ * only tools whose name is in the list. Pattern matching (`Bash(npm:*)`)
+ * is intentionally NOT supported here — use the dedicated
+ * `agent.permissions.allow` rules for that.
+ *
+ * This is the security boundary that the `agent.tools` config field
+ * promises but the harness had never enforced: previously, setting
+ * `agent.tools: ["Read"]` had zero effect on the LLM, which could call
+ * Bash / Edit / etc. via the registered provider path.
+ */
+export function applyToolAllowlist(
+  tools: ToolDefinition[],
+  allowlist: AgentConfig["tools"],
+): ToolDefinition[] {
+  if (allowlist === "*" || allowlist === undefined) return tools;
+  const set = new Set(allowlist);
+  const kept = tools.filter((t) => set.has(t.name));
+  const dropped = tools.filter((t) => !set.has(t.name));
+  if (dropped.length > 0) {
+    process.stderr.write(
+      `[m3:agent] agent.tools allowlist: hiding ${dropped.length} tool(s): ${dropped.map((t) => t.name).join(", ")}\n`,
+    );
+  }
+  return kept;
+}
+
+/**
  * Aggregate tools from all providers. Builtin and skills first, then any
  * registered external providers (MCP/plugins). Names are de-duplicated with
  * earlier providers winning so core tools can't be shadowed.
@@ -101,5 +129,10 @@ export async function collectTools(config: AgentConfig): Promise<CollectedTools>
   if (config.permissionMode === "plan") {
     collected = collected.filter((t) => t.isReadOnly);
   }
+  // Apply the user-declared `agent.tools` allowlist last so it overrides
+  // everything collected from providers. This is the only enforcement
+  // point — executeTools() relies on the LLM never having seen a name
+  // it cannot call, AND on a tool not being in the dispatch list.
+  collected = applyToolAllowlist(collected, config.tools);
   return { tools: collected, systemPrompt: prompts.join("\n\n") };
 }
