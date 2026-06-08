@@ -1,4 +1,3 @@
-import path from "node:path";
 import type { AgentConfig } from "@m3/config";
 import type { ToolDefinition } from "../harness/types.js";
 import { loadSkills } from "../skills/loader.js";
@@ -51,22 +50,30 @@ const skillsProvider: ToolProvider = {
 
 /**
  * C3 part 2: a memory tool + memory system-prompt fragment. The
- * store is shared across all sessions for the same cwd basename;
- * the system-prompt fragment injects the project's notes so the
- * LLM can see what previous sessions thought without an extra
- * tool call.
+ * store is keyed by the workspace id (D3) — a SHA-derived
+ * stable id from the absolute cwd. Two unrelated projects both
+ * named "src" no longer share a memory file. Legacy basename
+ * files are migrated lazily on first access.
  */
 const memoryProvider: ToolProvider = {
   id: "memory",
   provide: async () => {
+    const { resolveWorkspace } = await import("@m3/config");
     const store = new MemoryStore();
-    const project = path.basename(process.cwd());
-    const notes = store.readAll(project);
+    const ws = resolveWorkspace();
+    // Migrate a legacy basename file to the ws-id path on
+    // first access. Idempotent; no-op when already migrated.
+    try {
+      store.migrateBasenameToWorkspaceId(ws.absPath, ws.id);
+    } catch {
+      /* best-effort */
+    }
+    const notes = store.readAll(ws.id);
     const systemPrompt = notes
-      ? `\n## Cross-session memory (project: ${project})\n\n${notes}\n`
+      ? `\n## Cross-session memory (workspace: ${ws.label} / ${ws.id})\n\n${notes}\n`
       : "";
     return {
-      tools: [buildMemoryTool(store, project)],
+      tools: [buildMemoryTool(store, ws.id)],
       systemPrompt,
     };
   },

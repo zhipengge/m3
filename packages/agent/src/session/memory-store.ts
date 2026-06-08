@@ -3,19 +3,17 @@ import path from "node:path";
 import { atomicWriteFileSync, expandHome } from "@m3/config";
 
 /**
- * Cross-session memory store (C3).
+ * Cross-session memory store (C3 + D3).
  *
- * Each project (cwd basename) gets an append-only markdown file
- * at \`~/.m3/memory/<project>.md\`. Any session for that project
- * can read / append / search the file, so a "we decided to use
- * pnpm, not npm" note written yesterday shows up automatically
- * on the next session of the same project — across machines, if
- * the file is in a shared home directory.
+ * Keyed by *workspace id* (`ws-<16hex>`), not directory basename.
+ * Two unrelated projects both named "src" or "app" no longer
+ * share a memory file. The id is derived from the absolute cwd
+ * via @m3/config's resolveWorkspace.
  *
- * The store is intentionally dumb: markdown on disk, grep for
- * search. No vector index, no DB, no LLM-driven summarization.
- * The point is "any session can read what any previous session
- * thought" without a knowledge-engineering project.
+ * For users who have existing basename-keyed memory from before
+ * the workspace-id migration, run \`m3 memory migrate\` (D5)
+ * — the store keeps the basename API available so legacy files
+ * stay readable, but new writes go to the ws-id path.
  */
 export class MemoryStore {
   constructor(private readonly basePath: string = "~/.m3/memory") {}
@@ -95,5 +93,21 @@ export class MemoryStore {
       .readdirSync(dir)
       .filter((n) => n.endsWith(".md"))
       .map((n) => n.replace(/\.md$/, ""));
+  }
+
+  /**
+   * D3: legacy basename-keyed file → ws-id-keyed file. Returns
+   * the list of migrated basenames so the CLI can report what
+   * changed. Already-migrated files are skipped (no-op when
+   * target already exists).
+   */
+  migrateBasenameToWorkspaceId(absCwd: string, workspaceId: string): string[] {
+    const basename = path.basename(absCwd);
+    if (basename === workspaceId) return []; // no-op
+    const from = this.filePath(basename);
+    const to = this.filePath(workspaceId);
+    if (!fs.existsSync(from) || fs.existsSync(to)) return [];
+    fs.renameSync(from, to);
+    return [basename];
   }
 }

@@ -296,15 +296,21 @@ export class MessagePipeline {
         return;
       }
       if (cmdResult && isMemoryCommand(cmdResult)) {
-        // C3 part 2: real /memory handler. Reads, appends, or
-        // searches the cross-session memory store. We import
-        // lazily so the dep edge stays one-way (commands → agent
-        // via the bridge).
+        // C3 part 2 + D3: real /memory handler. Reads, appends, or
+        // searches the workspace memory store, keyed by ws-id
+        // (not basename — unrelated projects no longer share
+        // memory). Imports @m3/agent + @m3/config lazily.
         try {
           const { MemoryStore } = await import("@m3/agent");
-          const path = await import("node:path");
-          const project = path.basename(this.options.config.agent.cwd ?? process.cwd());
+          const { resolveWorkspace } = await import("@m3/config");
+          const ws = resolveWorkspace(this.options.config.agent.cwd);
           const store = new MemoryStore();
+          // Migrate a legacy basename file once per workspace.
+          try {
+            store.migrateBasenameToWorkspaceId(ws.absPath, ws.id);
+          } catch {
+            /* best-effort */
+          }
           if (cmdResult.subcommand === "append") {
             if (!cmdResult.argument.trim()) {
               await dispatcher.deliver({
@@ -312,9 +318,9 @@ export class MessagePipeline {
               });
               return;
             }
-            store.append(project, cmdResult.argument);
+            store.append(ws.id, cmdResult.argument);
             await dispatcher.deliver({
-              text: `Appended to ~/.m3/memory/${project}.md`,
+              text: `Appended to ~/.m3/memory/${ws.id}.md (workspace: ${ws.label})`,
             });
           } else if (cmdResult.subcommand === "search") {
             if (!cmdResult.argument.trim()) {
@@ -323,7 +329,7 @@ export class MessagePipeline {
               });
               return;
             }
-            const hits = store.search(project, cmdResult.argument);
+            const hits = store.search(ws.id, cmdResult.argument);
             if (hits.length === 0) {
               await dispatcher.deliver({ text: "no matches" });
             } else {
@@ -333,9 +339,9 @@ export class MessagePipeline {
             }
           } else {
             // read
-            const content = store.readAll(project);
+            const content = store.readAll(ws.id);
             await dispatcher.deliver({
-              text: content || `(no memory notes for project ${project})`,
+              text: content || `(no memory notes for workspace ${ws.label} / ${ws.id})`,
             });
           }
         } catch (err) {

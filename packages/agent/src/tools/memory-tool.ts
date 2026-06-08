@@ -1,12 +1,12 @@
-import path from "node:path";
 import { MemoryStore } from "../session/memory-store.js";
 import type { ToolContext, ToolDefinition } from "../harness/types.js";
 
 /**
- * Memory tool — surfaces the project memory store to the agent
- * (C3 part 2). Three actions:
+ * Memory tool — surfaces the workspace memory store to the agent
+ * (C3 part 2). Keyed by workspace id (`ws-<16hex>`), not
+ * directory basename. Three actions:
  *
- *   read   — return all notes for the current project, newest
+ *   read   — return all notes for the current workspace, newest
  *            first, truncated to 8KB.
  *   append — write a timestamped note. The note should be a
  *            short, declarative fact ("use pnpm, not npm") —
@@ -21,12 +21,12 @@ import type { ToolContext, ToolDefinition } from "../harness/types.js";
  */
 export function buildMemoryTool(
   store: MemoryStore = new MemoryStore(),
-  project: string = path.basename(process.cwd()),
+  workspaceId: string = "default",
 ): ToolDefinition {
   return {
     name: "Memory",
     description:
-      "Cross-session memory for this project. Actions: read (all notes, truncated), append (write a timestamped fact), search (substring, case-insensitive). The project name is the cwd basename; the same notes are visible to any session in the same project.",
+      "Cross-session memory for this workspace. Actions: read (all notes, truncated), append (write a timestamped fact), search (substring, case-insensitive). The workspace id is derived from the absolute cwd; notes are visible only to sessions in the same directory.",
     inputSchema: {
       type: "object",
       properties: {
@@ -55,18 +55,22 @@ export function buildMemoryTool(
         if (!i.note || !i.note.trim()) {
           return { content: "append: note is required", isError: true };
         }
-        const size = store.append(project, i.note);
-        return { content: `Appended to ~/.m3/memory/${project}.md (file now ${size} bytes).` };
+        const size = store.append(workspaceId, i.note);
+        return {
+          content: `Appended to ~/.m3/memory/${workspaceId}.md (file now ${size} bytes).`,
+        };
       }
       if (i.action === "search") {
         if (!i.query) return { content: "search: query is required", isError: true };
-        const hits = store.search(project, i.query);
+        const hits = store.search(workspaceId, i.query);
         if (hits.length === 0) return { content: "no matches" };
-        return { content: `${hits.length} match(es):\n${hits.join("\n---\n")}` };
+        return {
+          content: `${hits.length} match(es):\n${hits.join("\n---\n")}`,
+        };
       }
       if (i.action === "read") {
-        const content = store.readAll(project);
-        if (!content) return { content: "(no memory notes for this project yet)" };
+        const content = store.readAll(workspaceId);
+        if (!content) return { content: "(no memory notes for this workspace yet)" };
         return { content };
       }
       return { content: `unknown action: ${i.action}`, isError: true };
