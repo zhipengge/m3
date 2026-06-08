@@ -37,6 +37,7 @@ import { registerModelCommands } from "./model-command.js";
 import { registerTerminalPermissionPrompt } from "./terminal-permission.js";
 import { registerConfigCommand } from "./config-command.js";
 import { registerInitCommand } from "./init-command.js";
+import { registerWorkspaceCommand } from "./workspace-command.js";
 import { promptWorkspaceAccess } from "./workspace-grant.js";
 import { getLocalStatus, prepareInferenceBackend } from "@m3/local";
 import { header, status, suggest, c } from "./output.js";
@@ -499,6 +500,7 @@ registerLocalCommand(program);
 registerModelCommands(program);
 registerConfigCommand(program);
 registerInitCommand(program);
+registerWorkspaceCommand(program);
 
 channels
   .command("scan")

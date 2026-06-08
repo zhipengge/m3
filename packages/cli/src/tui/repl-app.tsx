@@ -1143,6 +1143,20 @@ function buildBannerText(
 "Type / for commands · Ctrl+O expand thinking · Enter send · Ctrl+C exit",
   ];
   if (workspace) lines.push(`Workspace: ${workspace}`);
+  // D5: surface the workspace id (ws-<16hex>) in the banner so
+  // the user always knows which scope their memory / model
+  // choice is bound to. Set by run-ink-repl from
+  // resolveWorkspace().
+  try {
+    // Lazy require to avoid a top-level import cycle at
+    // module-load time.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { resolveWorkspace } = require("@m3/config") as typeof import("@m3/config");
+    const ws = resolveWorkspace();
+    lines.push(`Workspace id: ${ws.id}`);
+  } catch {
+    /* non-fatal */
+  }
   // Channel-spawned runs (Feishu/Slack/WebChat) default to
   // bypassPermissions so the IM UX isn't a wall of permission
   // prompts. That's a real security trade-off: a prompt-injection
