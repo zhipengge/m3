@@ -405,6 +405,25 @@ export class MessagePipeline {
         });
         return;
       }
+      if (cmdResult && cmdResult.action === "set_model") {
+        // B6 + D4: persist the user's choice to the
+        // per-workspace last-model file. Mid-stream engine
+        // change is a refactor away, so the change applies to
+        // the next turn / next session.
+        try {
+          const { saveLastModel, resolveWorkspace } = await import("@m3/config");
+          const ws = resolveWorkspace(this.options.config.agent.cwd);
+          saveLastModel(cmdResult.model, ws.id);
+          await dispatcher.deliver({
+            text: `[model] Saved "${cmdResult.model}" to ~/.m3/last-model.${ws.id}.json (workspace: ${ws.label}). The next session will use it; the current in-flight engine is still using its loaded model.`,
+          });
+        } catch (err) {
+          await dispatcher.deliver({
+            text: `[model] Failed to persist: ${err instanceof Error ? err.message : err}`,
+          });
+        }
+        return;
+      }
       if (cmdResult && isReplyOnlyCommand(cmdResult)) {
         await dispatcher.deliver({ text: cmdResult.action === "reply_only" ? cmdResult.text : "" });
         return;

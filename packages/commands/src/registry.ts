@@ -168,7 +168,7 @@ const BUILTIN_COMMANDS: Record<string, CommandHandler> = {
     if (!query) {
       return {
         action: "reply_only",
-        text: `Active model: ${ctx.config.agent.model}\nList: m3 models\nSwitch: m3 model <ref> (persists to ~/.m3/last-model.json)`,
+        text: `Active model: ${ctx.config.agent.model}\nList: m3 models\nSwitch: m3 model <ref> (persists to ~/.m3/last-model.<ws-id>.json — per-workspace)`,
       };
     }
     // B6: persist the user's choice to a per-session override file

@@ -27,7 +27,11 @@ export class CommandBridge {
   }
 }
 
-export function applyCommandResult(result: CommandResult, originalBody: string): string {
+export function applyCommandResult(
+  result: CommandResult,
+  originalBody: string,
+  opts?: { persistModel?: (model: string) => Promise<string> | string },
+): string {
   if (result.action === "inject_prompt") {
     return result.prompt;
   }
@@ -36,6 +40,19 @@ export function applyCommandResult(result: CommandResult, originalBody: string):
       `[goal] Work toward this completion condition until it is satisfied: ${result.condition}`,
       "When fully done, say GOAL_MET in your reply.",
     ].join("\n");
+  }
+  if (result.action === "set_model") {
+    // B6 + D4: the caller (pipeline) supplies a persistModel
+    // callback that knows the workspace id. We do the persist
+    // here so the call site stays simple; the pipeline's
+    // reply-only path is the "next session will use …" string.
+    // For set_model, we want the reply to be a system message
+    // surfaced to the user, so we return null and the pipeline
+    // builds its own. We just persist.
+    if (opts?.persistModel) {
+      void opts.persistModel(result.model);
+    }
+    return ""; // pipeline handles the user-facing message
   }
   if (result.action === "reply_only") {
     return result.text;
