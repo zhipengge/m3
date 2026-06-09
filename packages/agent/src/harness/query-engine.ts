@@ -94,6 +94,19 @@ export class QueryEngine {
     try {
       if (finalResult.turns > 0 && finalResult.turns % 10 === 0) {
         snapshots.save(sessionId, finalResult.turns, finalResult.messages, "auto");
+        // GC the per-session directory to keep disk usage bounded.
+        // A 1k-turn session with no cap would leave ~100 verbatim
+        // copies of the transcript; the cap keeps ~20 turns of
+        // rewind history. GC is best-effort; a failure here is
+        // logged but never breaks the run.
+        try {
+          const deleted = snapshots.gc(sessionId);
+          if (deleted > 0) {
+            process.stderr.write(`[m3] snapshot gc pruned ${deleted} old snapshot(s)\n`);
+          }
+        } catch {
+          /* best-effort */
+        }
       }
     } catch (err) {
       process.stderr.write(

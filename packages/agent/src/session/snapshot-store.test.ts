@@ -43,4 +43,29 @@ describe("SnapshotStore", () => {
   it("list returns [] for an unknown session", () => {
     expect(store.list("missing")).toEqual([]);
   });
+
+  it("gc keeps the most recent N auto snapshots", () => {
+    for (let i = 1; i <= 10; i++) store.save("s1", i, [`m${i}`], "auto");
+    const deleted = store.gc("s1", 3);
+    expect(deleted).toBe(7);
+    const turns = store.list("s1").map((r) => r.turn);
+    expect(turns).toEqual([8, 9, 10]);
+  });
+
+  it("gc never deletes manual snapshots", () => {
+    for (let i = 1; i <= 5; i++) store.save("s1", i, [`m${i}`], "auto");
+    store.save("s1", 100, ["manual"], "manual");
+    const deleted = store.gc("s1", 2);
+    expect(deleted).toBe(3);
+    const turns = store.list("s1").map((r) => r.turn);
+    // Auto: keep last 2 (turns 4, 5). Manual: keep 100. Deleted: 1, 2, 3.
+    expect(turns).toEqual([4, 5, 100]);
+  });
+
+  it("gc is a no-op when under the cap", () => {
+    store.save("s1", 1, ["m"], "auto");
+    store.save("s1", 2, ["m"], "auto");
+    expect(store.gc("s1", 10)).toBe(0);
+    expect(store.list("s1")).toHaveLength(2);
+  });
 });

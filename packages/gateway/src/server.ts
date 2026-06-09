@@ -167,6 +167,17 @@ export class GatewayServer {
   async stop(): Promise<void> {
     clearGatewayPid();
 
+    // Flush any debounced session-mapper writes before we tear the
+    // rest of the gateway down. The debounce coalesces a 5–20
+    // writes/min hot stream into a single fsync per 500ms; without
+    // a final flush a SIGTERM mid-burst could lose the last few
+    // session id updates.
+    try {
+      this.sessionMapper.flush();
+    } catch {
+      // best-effort; persist() already swallows per-write errors
+    }
+
     await withShutdownTimeout(
       this.channelManager?.stopAll() ?? Promise.resolve(),
       8_000,
