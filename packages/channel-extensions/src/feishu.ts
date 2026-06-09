@@ -7,6 +7,7 @@ import {
 } from "./feishu/api.js";
 import { startFeishuWebhookServer } from "./feishu/webhook.js";
 import { startFeishuLongConnection, stopFeishuLongConnection } from "./feishu/ws-gateway.js";
+import { withChannelLogFile } from "./log-sink.js";
 
 const webhookServers = new Map<string, { close: () => Promise<void> }>();
 
@@ -43,12 +44,18 @@ export const feishuPlugin: ChannelPlugin = {
 
       const mode = account.connectionMode ?? "long";
 
+      // Mirror every runtime.log line to a per-channel daily file
+      // so a connection drop can be debugged post-mortem without
+      // tailing the gateway's stdout. Original runtime.log is
+      // still called first, so terminal output is unchanged.
+      const fileRuntime = withChannelLogFile("feishu", accountId, runtime);
+
       if (mode === "long") {
         await startFeishuLongConnection({
           accountId,
           appId: account.appId,
           appSecret: account.appSecret,
-          runtime,
+          runtime: fileRuntime,
           abortSignal,
         });
         return;
@@ -63,7 +70,7 @@ export const feishuPlugin: ChannelPlugin = {
         port: webhookPort,
         path: webhookPath,
         verificationToken: account.verificationToken,
-        runtime,
+        runtime: fileRuntime,
         abortSignal,
       });
       webhookServers.set(key, server);
