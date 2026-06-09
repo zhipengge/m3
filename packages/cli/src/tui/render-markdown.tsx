@@ -24,6 +24,7 @@
 import { Box, Text } from "ink";
 import { tokenize } from "./code-highlight.js";
 import { theme } from "./theme.js";
+import { sliceVisible, truncateMiddle } from "./wrap.js";
 
 const DISPLAY_CAP = 4000;
 
@@ -214,9 +215,15 @@ function InlineSpans({ spans }: { spans: Span[] }) {
 }
 
 /** Render a fenced code block with per-line syntax highlighting. */
-function CodeBlock({ text }: { text: string }) {
+function CodeBlock({ text, width }: { text: string; width?: number }) {
   const lines = text.split("\n");
   if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  // Inside the round border + paddingX=1, the usable content width
+  // is `width - 4` (border = 2 cols, padding = 2 cols). When the
+  // parent didn't pass `width` we let Ink fall back to the
+  // natural terminal width — that path is fine, this is just a
+  // belt-and-suspenders cap for very narrow panes.
+  const contentWidth = width !== undefined ? Math.max(20, width - 4) : undefined;
   return (
     <Box
       flexDirection="column"
@@ -224,9 +231,24 @@ function CodeBlock({ text }: { text: string }) {
       borderColor={theme.border}
       paddingX={1}
       marginY={0}
+      width={width}
     >
       {lines.map((line, i) => {
         const tokens = tokenize(line);
+        // Middle-truncate *whole* long lines so a 200-char URL in
+        // a comment doesn't push the entire block off-screen. When
+        // truncated we render the visible slice as a single plain
+        // text run — token-aligned colouring is impossible after
+        // a middle cut, but the slice is rare enough (line wider
+        // than the pane) that the loss is acceptable.
+        const truncated = contentWidth !== undefined ? truncateMiddle(line, contentWidth) : line;
+        if (truncated !== line) {
+          return (
+            <Text key={i} color={theme.muted}>
+              {truncated}
+            </Text>
+          );
+        }
         return (
           <Text key={i}>
             {tokens.map((t, j) => {
@@ -263,22 +285,60 @@ function CodeBlock({ text }: { text: string }) {
 /**
  * Render a chunk of model output as a sequence of paragraph Boxes.
  * Used by the assistant / system / error message rows.
+ *
+ * `width` is the visible column budget for the entire block (border
+ * + padding excluded). When omitted, Ink falls back to the
+ * terminal width. The block applies its own line-level slice so
+ * a 4k char assistant reply can't cascade into O(N²) wrap math
+ * during streaming.
+ *
+ * `streaming` adds an inline `▌` cursor at the very end of the
+ * text run. The cursor is rendered *inside* the last paragraph
+ * Box (not as a sibling) so Ink sees one continuous text run and
+ * doesn't re-flow the layout on every delta. The previous
+ * sibling-Text placement occasionally produced an extra blank
+ * row at the tail of the streaming reply.
  */
-export function MarkdownBlock({ text, dim = false }: { text: string; dim?: boolean }) {
+export function MarkdownBlock({
+  text,
+  dim = false,
+  width,
+  streaming,
+}: {
+  text: string;
+  dim?: boolean;
+  width?: number;
+  streaming?: boolean;
+}) {
+  const sliced = sliceVisible(text, { maxChars: DISPLAY_CAP, maxLines: 200, lineWidth: width });
   const truncated = text.length > DISPLAY_CAP
-    ? text.slice(0, DISPLAY_CAP) + "\n…(truncated)"
-    : text;
+    ? sliced.display + "\n…(truncated, see transcript for full text)"
+    : sliced.display;
   const blocks = truncated.split(/\n\s*\n/);
+  // Index of the last *visible* (non-null) line in the final block.
+  // The cursor rides that line so it appears at the natural end of
+  // the assistant text. Without this, the cursor would attach to
+  // the empty block separator and Ink would render a stray row.
+  const lastBlockIdx = blocks.length - 1;
+  const lastBlockLines = lastBlockIdx >= 0 ? parseLines(blocks[lastBlockIdx]!) : [];
+  let lastLineIdx = -1;
+  for (let i = lastBlockLines.length - 1; i >= 0; i--) {
+    if (lastBlockLines[i]!.kind !== "blank") {
+      lastLineIdx = i;
+      break;
+    }
+  }
   return (
-    <Box flexDirection="column" marginY={0}>
+    <Box flexDirection="column" marginY={0} width={width}>
       {blocks.map((block, bi) => {
         const lines = parseLines(block);
         return (
           <Box key={bi} flexDirection="column" marginTop={bi > 0 ? 1 : 0} marginY={0}>
             {lines.map((line, li) => {
+              const isLastLine = bi === lastBlockIdx && li === lastLineIdx;
               if (line.kind === "blank") return null;
               if (line.kind === "code") {
-                return <CodeBlock key={li} text={line.text.replace(/; lang=.*$/, "")} />;
+                return <CodeBlock key={li} text={line.text.replace(/; lang=.*$/, "")} width={width} />;
               }
               if (line.kind === "header") {
                 const color =
@@ -300,6 +360,9 @@ export function MarkdownBlock({ text, dim = false }: { text: string; dim?: boole
                       {line.marker}
                     </Text>
                     <InlineSpans spans={tokenizeInline(line.text)} />
+                    {streaming && isLastLine ? (
+                      <Text color={theme.accent}>▌</Text>
+                    ) : null}
                   </Box>
                 );
               }
@@ -309,9 +372,17 @@ export function MarkdownBlock({ text, dim = false }: { text: string; dim?: boole
                     <>
                       <Text color={theme.muted}>▎ </Text>
                       <InlineSpans spans={tokenizeInline(line.text.slice(1).trimStart())} />
+                      {streaming && isLastLine ? (
+                        <Text color={theme.accent}>▌</Text>
+                      ) : null}
                     </>
                   ) : (
-                    <InlineSpans spans={tokenizeInline(line.text)} />
+                    <>
+                      <InlineSpans spans={tokenizeInline(line.text)} />
+                      {streaming && isLastLine ? (
+                        <Text color={theme.accent}>▌</Text>
+                      ) : null}
+                    </>
                   )}
                 </Text>
               );

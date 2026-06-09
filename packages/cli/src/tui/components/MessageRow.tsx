@@ -13,6 +13,13 @@ const DISPLAY_CAP = 4000;
 type Props = {
   message: ChatLine;
   thinkingExpanded?: boolean;
+  /**
+   * Visible column budget for the entire row. When undefined, Ink
+   * falls back to the terminal width. Passing an explicit value
+   * keeps wrap math bounded during streaming — a 4k char reply at
+   * 80 cols is a different shape from a 4k char reply at 200 cols.
+   */
+  width?: number;
 };
 
 /**
@@ -34,11 +41,11 @@ type Props = {
  * stay plain because they're typically short.
  */
 function MessageRowImpl(props: Props) {
-  const { message, thinkingExpanded = false } = props;
+  const { message, thinkingExpanded = false, width } = props;
 
   if (message.role === "system") {
     return (
-      <Box marginY={0}>
+      <Box marginY={0} width={width}>
         <Text color={theme.muted}>∙ {message.text}</Text>
       </Box>
     );
@@ -49,7 +56,7 @@ function MessageRowImpl(props: Props) {
     // back to a plain red ✗ line for un-classified legacy entries.
     const kind: ErrorKind = message.errorKind ?? classifyError(message.text);
     return (
-      <Box marginY={0}>
+      <Box marginY={0} width={width}>
         <ErrorCard
           kind={kind}
           message={message.text}
@@ -62,7 +69,7 @@ function MessageRowImpl(props: Props) {
 
   if (message.role === "activity") {
     return (
-      <Box marginY={0}>
+      <Box marginY={0} width={width}>
         <Text color={theme.muted}>· {message.text}</Text>
       </Box>
     );
@@ -70,7 +77,7 @@ function MessageRowImpl(props: Props) {
 
   if (message.role === "tool_output") {
     return (
-      <Box marginY={0}>
+      <Box marginY={0} width={width}>
         <ToolResultCard
           toolName={message.toolName ?? "?"}
           output={message.text}
@@ -83,17 +90,20 @@ function MessageRowImpl(props: Props) {
 
   if (message.role === "thinking") {
     return (
-      <ThinkingBlock
-        text={message.text}
-        streaming={message.streaming}
-        expanded={thinkingExpanded}
-      />
+      <Box width={width}>
+        <ThinkingBlock
+          text={message.text}
+          streaming={message.streaming}
+          expanded={thinkingExpanded}
+          width={width}
+        />
+      </Box>
     );
   }
 
   if (message.role === "user") {
     return (
-      <Box flexDirection="column" marginY={0}>
+      <Box flexDirection="column" marginY={0} width={width}>
         <Box gap={1}>
           <Text color={theme.user} bold>
             you
@@ -113,16 +123,25 @@ function MessageRowImpl(props: Props) {
     hidden > 0 ? "…" + message.text.slice(-DISPLAY_CAP) : message.text;
 
   return (
-    <Box flexDirection="column" marginY={0}>
+    <Box flexDirection="column" marginY={0} width={width}>
       <Box gap={1}>
         <Text color={theme.accent} bold>
           m3
         </Text>
         <Text color={theme.muted}>›</Text>
       </Box>
-      <Box paddingLeft={3}>
-        <MarkdownBlock text={display} />
-        {message.streaming ? <Text color={theme.accent}>▌</Text> : null}
+      <Box paddingLeft={3} width={width !== undefined ? width - 3 : undefined}>
+        {/* Cursor is rendered *inside* MarkdownBlock's last
+            paragraph as part of the text run (see the `streaming`
+            prop on MarkdownBlock). Putting it here as a sibling
+            would create a separate Text node whose layout Ink
+            has to recompute on every delta — visible as a one-row
+            jitter at the tail of the streaming reply. */}
+        <MarkdownBlock
+          text={display}
+          width={width !== undefined ? width - 3 : undefined}
+          streaming={message.streaming}
+        />
       </Box>
     </Box>
   );
@@ -138,10 +157,18 @@ function MessageRowImpl(props: Props) {
 export const MessageRow = memo(MessageRowImpl, (prev, next) => {
   const pm = prev.message;
   const nm = next.message;
-  if (pm === nm && prev.thinkingExpanded === next.thinkingExpanded) return true;
+  if (
+    pm === nm &&
+    prev.thinkingExpanded === next.thinkingExpanded &&
+    prev.width === next.width
+  )
+    return true;
   if (pm.id !== nm.id) return false;
   if (pm.text !== nm.text) return false;
   if (pm.streaming !== nm.streaming) return false;
   if (prev.thinkingExpanded !== next.thinkingExpanded) return false;
+  // Width changes (terminal resize) must trigger a re-render so
+  // the markdown re-flows to the new column budget.
+  if (prev.width !== next.width) return false;
   return true;
 });

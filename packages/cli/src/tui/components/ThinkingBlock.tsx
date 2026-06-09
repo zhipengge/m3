@@ -1,12 +1,20 @@
 import { memo } from "react";
 import { Box, Text } from "ink";
 import { theme } from "../theme.js";
+import { truncateMiddle } from "../wrap.js";
 
 export type ThinkingBlockProps = {
   text: string;
   streaming?: boolean;
   /** When false, only the header is shown (unless streaming — then body is always visible). */
   expanded: boolean;
+  /**
+   * Visible column budget for the body. When omitted, Ink falls
+   * back to the parent box width. The body applies a middle-truncate
+   * pass so a long reasoning line can't push the rest of the row
+   * off-screen on a narrow terminal.
+   */
+  width?: number;
 };
 
 /**
@@ -25,7 +33,7 @@ function buildDisplay(text: string): { display: string; hidden: number } {
 
 /** Claude Code–style thinking block: ∴ Thinking + streamed reasoning body. */
 export const ThinkingBlock = memo(function ThinkingBlock(props: ThinkingBlockProps) {
-  const { text, streaming, expanded } = props;
+  const { text, streaming, expanded, width } = props;
   if (!text && !streaming) return null;
 
   const showBody = expanded || streaming;
@@ -34,7 +42,7 @@ export const ThinkingBlock = memo(function ThinkingBlock(props: ThinkingBlockPro
   if (!showBody) {
     const hint = text.length > 0 ? ` (${text.length} chars, Ctrl+O to expand)` : " (Ctrl+O to expand)";
     return (
-      <Box flexDirection="column" marginY={0}>
+      <Box flexDirection="column" marginY={0} width={width}>
         <Text dimColor italic>
           {label}
           <Text dimColor>{hint}</Text>
@@ -49,16 +57,24 @@ export const ThinkingBlock = memo(function ThinkingBlock(props: ThinkingBlockPro
   // drawing the body region.
   if (text.length === 0) {
     return (
-      <Box flexDirection="column" marginY={0} gap={0} width="100%">
+      <Box flexDirection="column" marginY={0} gap={0} width={width}>
         <Text dimColor italic>{label}</Text>
       </Box>
     );
   }
 
   const { display, hidden } = buildDisplay(text);
+  // The body has paddingLeft=2 so the visible column budget for
+  // the text itself is `width - 2` when the parent passed a width.
+  // Middle-truncate any single line that overflows so a runaway
+  // URL or JSON blob doesn't push the whole row right.
+  const bodyWidth = width !== undefined ? Math.max(20, width - 2) : undefined;
+  const shaped = bodyWidth !== undefined
+    ? display.split("\n").map((l) => truncateMiddle(l, bodyWidth)).join("\n")
+    : display;
 
   return (
-    <Box flexDirection="column" marginY={0} gap={0} width="100%">
+    <Box flexDirection="column" marginY={0} gap={0} width={width}>
       <Text dimColor italic>
         {label}
         {hidden > 0 ? (
@@ -67,7 +83,7 @@ export const ThinkingBlock = memo(function ThinkingBlock(props: ThinkingBlockPro
       </Text>
       <Box paddingLeft={2}>
         <Text color={theme.thinking} dimColor wrap="truncate-end">
-          {display}
+          {shaped}
           {streaming ? <Text color={theme.thinking}>▌</Text> : null}
         </Text>
       </Box>
