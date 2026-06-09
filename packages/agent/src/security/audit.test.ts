@@ -135,3 +135,23 @@ describe("AuditLog", () => {
     expect(evt.summary).toBeUndefined();
   });
 });
+
+describe("redactSecrets size cap (defense against regex DoS)", () => {
+  it("refuses to redact inputs larger than the cap", () => {
+    const huge = "sk-abcdefghijklmnop1234\n" + "x".repeat(200_000);
+    const r = redactSecrets(huge);
+    // We don't run the regex suite on huge input — instead we
+    // return a short marker that prevents the leak entirely.
+    expect(r).toContain("[input too large to redact");
+  });
+
+  it("summarizeInput pre-truncates huge inputs before redact", () => {
+    const huge = { command: "echo " + "x".repeat(200_000) };
+    const s = summarizeInput(huge, 120);
+    // The pre-truncation kicks in, so we DON'T see the
+    // "input too large" path — the redact pass gets a
+    // truncated string and returns a normal summary.
+    expect(s).not.toContain("[input too large");
+    expect(s.length).toBeLessThanOrEqual(121);
+  });
+});

@@ -51,6 +51,21 @@ const SECRET_PATTERNS: SecretPattern[] = [
 ];
 
 /**
+ * Maximum input size we run the secret-regex suite against. Inputs
+ * larger than this are returned verbatim — secrets past this point
+ * are extremely unlikely (a real key is <1kB; the cap is 64kB to
+ * leave headroom for one-liner stack traces that mention a token).
+ * The cap is a defensive guard against a runaway tool that pastes
+ * a multi-megabyte log file into a Write/Bash call — running ten
+ * global regexes against a 10MB string on every tool call is
+ * enough to add seconds of latency per turn.
+ *
+ * Exported so `summarizeInput` can pre-truncate to a value safely
+ * below this cap.
+ */
+export const REDACT_INPUT_CAP = 64 * 1024;
+
+/**
  * Replace any substrings that look like credentials with `[REDACTED]`. Order
  * matters: more specific patterns run first so a prefix like "sk-..." is
  * caught before the generic env-var fallback.
@@ -60,6 +75,14 @@ const SECRET_PATTERNS: SecretPattern[] = [
  * the redacted output still tells the operator which field was scrubbed.
  */
 export function redactSecrets(input: string): string {
+  if (input.length > REDACT_INPUT_CAP) {
+    // Refuse to regex a huge blob. The caller is expected to
+    // summarise / truncate first; this is a safety net, not a
+    // primary path. The verbatim return still avoids leaking
+    // the raw input in logs (we don't log it at all in that
+    // case).
+    return "[input too large to redact; not logged]";
+  }
   let out = input;
   for (const { re, preserveLabel } of SECRET_PATTERNS) {
     out = out.replace(re, (match, ...groups) => {
@@ -193,6 +216,15 @@ export function summarizeInput(input: unknown, max = 120): string {
   } catch {
     s = String(input);
   }
+  // Pre-truncate to a value safely below the redact-input cap
+  // so the regex pass below doesn't accidentally trip the
+  // safety net on a 1MB Bash command. Summaries are bounded by
+  // `max` anyway, so a 1MB string is pathologically large; we
+  // cap to REDACT_INPUT_CAP - 1KB to keep the redactor's
+  // invariant (and avoid a misleading "input too large to
+  // redact" message in the audit log).
+  const PRE_CAP = Math.max(1024, REDACT_INPUT_CAP - 1024);
+  if (s.length > PRE_CAP) s = s.slice(0, PRE_CAP) + "…(truncated before redact)";
   const redacted = redactSecrets(s);
   return redacted.length > max ? `${redacted.slice(0, max)}…` : redacted;
 }
