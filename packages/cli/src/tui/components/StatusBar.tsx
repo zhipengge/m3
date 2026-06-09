@@ -227,4 +227,32 @@ function StatusBarImpl(props: Props) {
   );
 }
 
-export const StatusBar = memo(StatusBarImpl);
+export const StatusBar = memo(StatusBarImpl, (prev, next) => {
+  // Field-wise equality. The parent's forceTick used to fire
+  // every 30s just to refresh the duration gauge; the only
+  // prop that actually changes on those ticks is `sessionMs`.
+  // Without this equality function, a 30s tick would also
+  // re-render the bar even when the gauge is unchanged (e.g.
+  // during streaming when nothing in the bar shifts), and
+  // every streaming delta would touch a bar whose data
+  // hasn't moved.
+  if (prev.model !== next.model) return false;
+  if (prev.contextPct !== next.contextPct) return false;
+  if (prev.goal !== next.goal) return false;
+  if (prev.dashboardUrl !== next.dashboardUrl) return false;
+  if (prev.sessionMs !== next.sessionMs) return false;
+  if (prev.toolCalls !== next.toolCalls) return false;
+  if (prev.sessionAllowedCount !== next.sessionAllowedCount) return false;
+  const pt = prev.tokens;
+  const nt = next.tokens;
+  if (pt === nt) return true;
+  if (!pt || !nt) return false;
+  return (
+    pt.input === nt.input &&
+    pt.output === nt.output &&
+    pt.total === nt.total &&
+    pt.costUsd === nt.costUsd &&
+    pt.cacheRead === nt.cacheRead &&
+    pt.cacheCreation === nt.cacheCreation
+  );
+});

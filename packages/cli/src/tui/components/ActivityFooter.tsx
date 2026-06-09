@@ -70,4 +70,41 @@ function ActivityFooterImpl(props: Props) {
   );
 }
 
-export const ActivityFooter = memo(ActivityFooterImpl);
+export const ActivityFooter = memo(ActivityFooterImpl, (prev, next) => {
+  // Field-wise equality for the footer. The previous default
+  // (reference) always re-rendered on every parent commit
+  // because `recent` is a new array per `setRecentTools`,
+  // and during a long tool sequence that meant the footer
+  // redrew on every Bash / Read / Edit result even when
+  // the visible "Recent: …" line hadn't changed.
+  const pc = prev.current;
+  const nc = next.current;
+  if (pc !== nc) {
+    if (!pc || !nc) return false;
+    if (
+      pc.name !== nc.name ||
+      pc.detail !== nc.detail ||
+      pc.running !== nc.running ||
+      pc.isError !== nc.isError ||
+      pc.durationMs !== nc.durationMs
+    )
+      return false;
+  }
+  if (prev.turns !== next.turns) return false;
+  const pr = prev.recent;
+  const nr = next.recent;
+  if (pr === nr) return true;
+  if (pr.length !== nr.length) return false;
+  for (let i = 0; i < pr.length; i++) {
+    const a = pr[i]!;
+    const b = nr[i]!;
+    if (
+      a.name !== b.name ||
+      a.detail !== b.detail ||
+      a.isError !== b.isError ||
+      a.durationMs !== b.durationMs
+    )
+      return false;
+  }
+  return true;
+});

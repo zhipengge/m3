@@ -26,6 +26,7 @@ import { createStreamBuffer } from "./repl-stream-buffer.js";
 import { theme } from "./theme.js";
 import { readClipboardImage } from "../clipboard-image.js";
 import { SplitView, filePathForTool } from "./components/SplitView.js";
+import { useTerminalWidth } from "./wrap.js";
 
 type ReplMedia = NonNullable<InboundMessage["media"]>;
 
@@ -80,8 +81,13 @@ export function findReverseISearchMatch(history: string[], query: string): strin
 
 export function ReplApp(props: ReplAppProps) {
   const { exit } = useApp();
-  const { stdout } = useStdout();
-  const terminalWidth = stdout?.columns ?? 80;
+  // useStdout is still imported below for other consumers; keep
+  // the hook call so future helpers can grab `stdout` without
+  // re-adding the import.
+  useStdout();
+  // Live terminal width — re-renders on resize so a window shrink/grow
+  // reflows the chat. Falls back to 80 for headless / test usage.
+  const terminalWidth = useTerminalWidth();
   const [completed, setCompleted] = useState<ChatLine[]>(() => [
     {
       id: BANNER_ID,
@@ -173,6 +179,13 @@ export function ReplApp(props: ReplAppProps) {
     "default" | "acceptEdits" | "plan" | null
   >(null);
   const [turnCount, setTurnCount] = useState(0);
+  /** Total tool invocations this session (visible in the status bar).
+   *  Kept in state — not a ref + forceTick — so the parent doesn't
+   *  need a "force re-render" pass on every tool_use. The
+   *  status bar's `toolCalls` prop becomes a normal state-driven
+   *  value, and a tool use only re-renders the bar (which is
+   *  already memoed with a field-wise equality function). */
+  const [toolCount, setToolCount] = useState(0);
   /** Per-call startedAt timestamp, captured when tool_use fires so we
    *  can compute durationMs in tool_result. */
   const toolStartRef = useRef<Map<string, number>>(new Map());
@@ -182,8 +195,13 @@ export function ReplApp(props: ReplAppProps) {
   /** Session start wall-clock — drives the "0s / 5m / 1.2h" gauge in
    *  the status bar. */
   const sessionStartRef = useRef<number>(Date.now());
-  /** Total tool invocations this session (visible in the status bar). */
-  const toolCountRef = useRef<number>(0);
+  /** Live duration gauge (ms since session start). Held in state so
+   *  the parent only re-renders the StatusBar on each tick; without
+   *  state here, the parent's `Date.now() - sessionStartRef.current`
+   *  would shift a new number into StatusBar and force it to
+   *  re-render — fine in isolation, but every 30s the parent would
+   *  also walk its whole subtree if any child lacked memo equality. */
+  const [sessionMs, setSessionMs] = useState(0);
   /** Persistent command history (saved to ~/.m3/repl_history). */
   const historyRef = useRef<HistoryStore | null>(null);
   if (historyRef.current === null) historyRef.current = createHistoryStore();
@@ -203,11 +221,16 @@ export function ReplApp(props: ReplAppProps) {
     query: string;
     match: string | null;
   } | null>(null);
-  const [, forceTick] = useState(0);
   // Refresh the duration gauge every 30 seconds. Cheap and rare enough
-  // not to interfere with the streaming/spinner cadences.
+  // not to interfere with the streaming/spinner cadences. We unref
+  // the interval so the gateway can exit on its own terms — the
+  // gauge is a "nice to have" and shouldn't keep the event loop
+  // alive after a /quit.
   useEffect(() => {
-    const id = setInterval(() => forceTick((n) => n + 1), 30_000);
+    const id = setInterval(() => {
+      setSessionMs(Date.now() - sessionStartRef.current);
+    }, 30_000);
+    if (typeof id.unref === "function") id.unref();
     return () => clearInterval(id);
   }, []);
   /** Latest currentTool detail, used inside the onToolResult sink
@@ -256,8 +279,12 @@ export function ReplApp(props: ReplAppProps) {
   const streamBufferRef = useRef(
     createStreamBuffer((kind, delta) => {
       // First-byte arrived — clear the progress placeholder so it
-      // doesn't sit there forever if the LLM is slow.
-      if (pendingProgress) setPendingProgress(null);
+      // doesn't sit there forever if the LLM is slow. Always call
+      // the setter; React bails on identical values so this is
+      // free when the placeholder is already null. (The previous
+      // "if (pendingProgress) ..." read a closure-captured value
+      // that went stale on the second submit in a row.)
+      setPendingProgress(null);
       if (kind === "thinking") {
         setLoading(true);
         setLiveThinking((prev) => {
@@ -349,7 +376,7 @@ export function ReplApp(props: ReplAppProps) {
       onToolUse(info: { id: string; name: string; input: unknown }) {
         const detail = describeToolCall(info.name, info.input);
         toolStartRef.current.set(info.id, Date.now());
-        toolCountRef.current += 1;
+        setToolCount((n) => n + 1);
         setCurrentTool({ name: info.name, detail, running: true });
         // Track the most recent file-targeted tool so the split
         // view's left pane can follow the agent's attention.
@@ -369,7 +396,10 @@ export function ReplApp(props: ReplAppProps) {
           const filePath = typeof inp.file_path === "string" ? inp.file_path : undefined;
           setPendingDiff({ filePath, oldString: "", newString });
         }
-        forceTick((n) => n + 1); // refresh status bar so "N tools" updates
+        // (no more forceTick: setToolCount above drives the
+        // status bar's "N tools" gauge via real state, so the
+        // parent only re-renders the bar — the rest of the
+        // tree's memoed children skip cleanly.)
       },
       onToolResult(info: { id: string; name: string; isError?: boolean; output?: string }) {
         const startedAt = toolStartRef.current.get(info.id) ?? Date.now();
@@ -972,29 +1002,35 @@ export function ReplApp(props: ReplAppProps) {
           {props.workspace ? <Text dimColor>Workspace: {props.workspace}</Text> : null}
         </Box>
       ) : (
-        <Box key={msg.id} marginBottom={0}>
+        <Box key={msg.id} marginBottom={0} width={terminalWidth}>
           <MessageRow
             message={msg}
             thinkingExpanded={msg.role === "thinking"}
+            width={terminalWidth}
           />
         </Box>
       ),
-    [props.workspace],
+    [props.workspace, terminalWidth],
   );
 
   // The chat live region is rendered identically in single-pane
   // and split-pane modes; the only difference is the outer
   // container. Build it once as a Fragment and reuse.
+  // In split-view mode, the chat half is roughly half the terminal
+  // width; in single-pane mode it's the full width.
+  const chatWidth = splitView ? Math.max(20, terminalWidth - Math.floor(terminalWidth * 0.5) - 1) : terminalWidth;
+
   const liveRegion = (
     <Box flexDirection="column" flexShrink={0} width="100%">
       {liveThinking ? (
         <MessageRow
           message={liveThinking}
           thinkingExpanded={thinkingExpanded || Boolean(liveThinking.streaming)}
+          width={chatWidth}
         />
       ) : null}
       {liveAssistant ? (
-        <MessageRow message={liveAssistant} thinkingExpanded={false} />
+        <MessageRow message={liveAssistant} thinkingExpanded={false} width={chatWidth} />
       ) : null}
       {completed.length <= 1 && !liveThinking && !liveAssistant && !currentTool ? (
         <Box flexDirection="column" marginY={0}>
@@ -1112,8 +1148,8 @@ export function ReplApp(props: ReplAppProps) {
         model={props.modelLabel}
         dashboardUrl={props.dashboardUrl}
         tokens={tokens ?? undefined}
-        sessionMs={Date.now() - sessionStartRef.current}
-        toolCalls={toolCountRef.current}
+        sessionMs={sessionMs}
+        toolCalls={toolCount}
         sessionAllowedCount={sessionAllowedToolsRef.current.size}
       />
     </Box>
