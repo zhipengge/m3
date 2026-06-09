@@ -1,34 +1,79 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages/messages.mjs";
 import type { ContentBlock, HarnessMessage } from "../harness/types.js";
+import { resolveImageSource } from "../harness/image-source.js";
+import { createIdleWatchdog, readIdleTimeoutMs } from "./idle-watchdog.js";
 import type { LlmProvider, LlmStreamCallbacks, LlmTurnParams, LlmTurnResult } from "./types.js";
 
-function toApiMessages(messages: HarnessMessage[]): MessageParam[] {
-  return messages.map((m) => {
+/** MIME types Anthropic accepts in the `image.source.media_type` field. */
+const ANTHROPIC_IMAGE_MIME = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+]);
+
+async function toApiMessages(messages: HarnessMessage[]): Promise<MessageParam[]> {
+  const out: MessageParam[] = [];
+  for (const m of messages) {
     if (typeof m.content === "string") {
-      return { role: m.role, content: m.content } as MessageParam;
+      out.push({ role: m.role, content: m.content } as MessageParam);
+      continue;
     }
-    return {
-      role: m.role,
-      content: m.content.map((block) => {
-        if (block.type === "text") return { type: "text" as const, text: block.text };
-        if (block.type === "tool_use") {
-          return {
-            type: "tool_use" as const,
-            id: block.id,
-            name: block.name,
-            input: block.input as Record<string, unknown>,
-          };
+    const parts: NonNullable<MessageParam["content"]> = [];
+    for (const block of m.content) {
+      if (block.type === "text") {
+        const existing = parts.find(
+          (p): p is { type: "text"; text: string } => typeof p === "object" && "type" in p && p.type === "text",
+        );
+        if (existing) existing.text += block.text;
+        else parts.push({ type: "text", text: block.text });
+        continue;
+      }
+      if (block.type === "image") {
+        const { data, mimeType } = await resolveImageSource(block.source);
+        // Anthropic only supports the four standard image MIMEs; for
+        // anything else (e.g. a clipboard BMP) we surface an inline error
+        // block rather than silently dropping the image.
+        if (!ANTHROPIC_IMAGE_MIME.has(mimeType)) {
+          parts.push({
+            type: "text",
+            text: `[image: unsupported MIME ${mimeType}; Anthropic only accepts png/jpeg/gif/webp]`,
+          });
+          continue;
         }
-        return {
-          type: "tool_result" as const,
-          tool_use_id: block.tool_use_id,
-          content: block.content,
-          is_error: block.is_error,
-        };
-      }),
-    } as MessageParam;
-  });
+        // NOTE: Anthropic's `data` field is raw base64, NOT a `data:` URI
+        // (OpenAI's is the opposite). Easy to confuse.
+        parts.push({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: mimeType as "image/png" | "image/jpeg" | "image/gif" | "image/webp",
+            data,
+          },
+        });
+        continue;
+      }
+      if (block.type === "tool_use") {
+        parts.push({
+          type: "tool_use",
+          id: block.id,
+          name: block.name,
+          input: block.input as Record<string, unknown>,
+        });
+        continue;
+      }
+      // tool_result
+      parts.push({
+        type: "tool_result",
+        tool_use_id: block.tool_use_id,
+        content: block.content,
+        is_error: block.is_error,
+      });
+    }
+    out.push({ role: m.role, content: parts } as MessageParam);
+  }
+  return out;
 }
 
 function mapStopReason(reason: string | null): LlmTurnResult["stopReason"] {
@@ -50,7 +95,7 @@ export class AnthropicLlmProvider implements LlmProvider {
       model: params.model.modelId,
       max_tokens: params.model.maxTokens,
       system: params.system,
-      messages: toApiMessages(params.messages),
+      messages: await toApiMessages(params.messages),
       tools: params.tools.length > 0 ? params.tools : undefined,
     });
 
@@ -58,29 +103,80 @@ export class AnthropicLlmProvider implements LlmProvider {
       params.abortSignal.addEventListener("abort", () => stream.abort(), { once: true });
     }
 
-    stream.on("text", (delta) => {
-      text += delta;
-      callbacks?.onTextDelta?.(delta);
-    });
+    // Idle watchdog. The Anthropic SDK doesn't surface stream-level stalls
+    // well, so we hook the same bump-on-event pattern as before but use
+    // the shared helper from idle-watchdog.ts.
+    const idleMs = readIdleTimeoutMs();
+    const idleWatchdog = createIdleWatchdog(idleMs, () => stream.abort());
+    if (idleMs > 0) {
+      stream.on("text", () => idleWatchdog.bump());
+      stream.on("contentBlock", () => idleWatchdog.bump());
+      stream.on("message", () => idleWatchdog.bump());
+    }
 
-    stream.on("contentBlock", (block) => {
-      if (block.type === "tool_use") {
-        assistantContent.push({
-          type: "tool_use",
-          id: block.id,
-          name: block.name,
-          input: block.input,
-        });
+    try {
+      stream.on("text", (delta) => {
+        text += delta;
+        callbacks?.onTextDelta?.(delta);
+      });
+
+      stream.on("contentBlock", (block) => {
+        if (block.type === "tool_use") {
+          assistantContent.push({
+            type: "tool_use",
+            id: block.id,
+            name: block.name,
+            input: block.input,
+          });
+        }
+      });
+
+      const final = await stream.finalMessage();
+      if (text) assistantContent.unshift({ type: "text", text });
+
+      // Anthropic returns a full Usage object on the final message
+      // (input_tokens, output_tokens, cache_creation_input_tokens,
+      // cache_read_input_tokens). Normalize into our shared TokenUsage.
+      const u = final.usage;
+      const usage = u
+        ? (() => {
+            const input = u.input_tokens ?? 0;
+            const output = u.output_tokens ?? 0;
+            const cacheRead = u.cache_read_input_tokens ?? 0;
+            const cacheCreation = u.cache_creation_input_tokens ?? 0;
+            const total = input + output + cacheRead + cacheCreation;
+            const costUsd = (input * (params.model.pricing?.input ?? 0) +
+              output * (params.model.pricing?.output ?? 0)) / 1_000_000;
+            return {
+              input,
+              output,
+              cacheRead: u.cache_read_input_tokens ?? undefined,
+              cacheCreation: u.cache_creation_input_tokens ?? undefined,
+              total,
+              costUsd: params.model.pricing ? costUsd : undefined,
+            };
+          })()
+        : undefined;
+
+      return {
+        assistantContent,
+        text,
+        stopReason: mapStopReason(final.stop_reason),
+        ...(usage ? { usage } : {}),
+      };
+    } catch (err) {
+      // Re-throw as a more descriptive error so the TUI can show a useful
+      // message instead of an opaque SDK exception.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("aborted") || msg.includes("abort")) {
+        throw new Error(
+          `Anthropic stream aborted (idle ${Math.round(idleMs / 1000)}s without an event). ` +
+            `Set M3_LLM_IDLE_TIMEOUT_MS=0 to disable.`,
+        );
       }
-    });
-
-    const final = await stream.finalMessage();
-    if (text) assistantContent.unshift({ type: "text", text });
-
-    return {
-      assistantContent,
-      text,
-      stopReason: mapStopReason(final.stop_reason),
-    };
+      throw err;
+    } finally {
+      idleWatchdog.stop();
+    }
   }
 }

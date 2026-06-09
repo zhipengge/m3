@@ -1,0 +1,157 @@
+import { describe, expect, it, vi } from "vitest";
+import { AuditLog, redactSecrets, summarizeInput } from "./audit.js";
+
+describe("redactSecrets", () => {
+  it("redacts sk- style API keys", () => {
+    expect(redactSecrets("token is sk-abcdefghijklmnop1234 end")).toContain("[REDACTED]");
+    expect(redactSecrets("token is sk-abcdefghijklmnop1234 end")).not.toContain("sk-abcdefghijklmnop1234");
+  });
+
+  it("redacts GitHub tokens", () => {
+    expect(redactSecrets("export GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz1234")).not.toContain("ghp_");
+  });
+
+  it("redacts Slack tokens", () => {
+    expect(redactSecrets("slack=xoxb-1234567890-abcdef")).not.toContain("xoxb-1234567890-abcdef");
+  });
+
+  it("redacts AWS access keys", () => {
+    expect(redactSecrets("AKIAIOSFODNN7EXAMPLE logged")).not.toContain("AKIAIOSFODNN7EXAMPLE");
+  });
+
+  it("redacts key=value assignments of long values", () => {
+    const r = redactSecrets("API_KEY=thisIsAReallyLongSecretValue12345 foo=bar");
+    expect(r).not.toContain("thisIsAReallyLongSecretValue12345");
+    expect(r).toContain("API_KEY=");
+    expect(r).toContain("[REDACTED]");
+    expect(r).toContain("foo=bar");
+  });
+
+  it("redacts token=… with separator preserved", () => {
+    const r = redactSecrets("token: abcdefghijklmnop12345");
+    expect(r).not.toContain("abcdefghijklmnop12345");
+    // Either separator is fine; we just need the keyword + separator kept
+    expect(r.includes("token=") || r.includes("token:")).toBe(true);
+    expect(r).toContain("[REDACTED]");
+  });
+
+  it("redacts Authorization headers", () => {
+    const r = redactSecrets("curl -H 'Authorization: Bearer abcdefghij1234567890'");
+    expect(r).not.toContain("abcdefghij1234567890");
+  });
+
+  it("redacts Authorization Digest headers", () => {
+    const r = redactSecrets("Authorization: Digest username=\"a\", realm=\"r\"");
+    expect(r).not.toContain("Digest username");
+  });
+
+  it("redacts JWTs (header.payload.signature)", () => {
+    const jwt =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    const r = redactSecrets(`bearer=${jwt}`);
+    expect(r).not.toContain(jwt);
+    expect(r).toContain("[REDACTED]");
+  });
+
+  it("redacts GitHub fine-grained + server tokens", () => {
+    expect(redactSecrets("ghs_abcdefghijklmnopqrstuvwxyz1234")).not.toContain("ghs_");
+    expect(
+      redactSecrets("github_pat_11ABCXYZ0_abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyzABCD"),
+    ).not.toContain("github_pat_");
+  });
+
+  it("redacts npm publish tokens", () => {
+    expect(redactSecrets("//reg.npmjs.org/:_authToken=npm_abcdefghijklmnopqrstuv")).not.toContain(
+      "npm_abcdefghijklmnopqrstuv",
+    );
+  });
+
+  it("redacts Anthropic sk-ant- keys", () => {
+    expect(redactSecrets("ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnop1234")).not.toContain(
+      "sk-ant-api03",
+    );
+  });
+
+  it("redacts AWS STS session tokens (FwoGZXIv... base64 blob)", () => {
+    // A realistic-shape token (~110+ base64 chars after the prefix).
+    const t = "FwoGZXIv" + "A".repeat(140);
+    expect(redactSecrets(`AWS_SESSION=${t}`)).not.toContain(t);
+  });
+
+  it("leaves benign input alone", () => {
+    expect(redactSecrets("ls -la /tmp")).toBe("ls -la /tmp");
+    expect(redactSecrets("hello world")).toBe("hello world");
+    expect(redactSecrets("path=/usr/bin")).toBe("path=/usr/bin");
+  });
+
+  it("handles JSON-ish input", () => {
+    const r = redactSecrets('{"apiKey":"sk-abcdefghijklmnop1234","name":"x"}');
+    expect(r).not.toContain("sk-abcdefghijklmnop1234");
+  });
+});
+
+describe("summarizeInput", () => {
+  it("truncates long strings", () => {
+    const long = "x".repeat(500);
+    const s = summarizeInput(long, 50);
+    expect(s.length).toBeLessThanOrEqual(60);
+    expect(s).toMatch(/…$/);
+  });
+
+  it("redacts secrets before truncating", () => {
+    const s = summarizeInput("sk-abcdefghijklmnop1234 and more text", 200);
+    expect(s).not.toContain("sk-abcdefghijklmnop1234");
+    expect(s).toContain("[REDACTED]");
+  });
+
+  it("handles non-string JSON-like input", () => {
+    const s = summarizeInput({ command: "echo hi", secret: "sk-abcdefghijklmnop1234" });
+    expect(s).not.toContain("sk-abcdefghijklmnop1234");
+  });
+});
+
+describe("AuditLog", () => {
+  it("emits a structured event with timestamp and redacts summary", () => {
+    const sink = vi.fn();
+    const log = new AuditLog(sink);
+    log.record({
+      sessionId: "s1",
+      toolName: "Bash",
+      decision: "allow",
+      summary: "running with token sk-abcdefghijklmnop1234",
+    });
+    expect(sink).toHaveBeenCalledOnce();
+    const evt = sink.mock.calls[0][0];
+    expect(evt.toolName).toBe("Bash");
+    expect(evt.decision).toBe("allow");
+    expect(evt.ts).toMatch(/T.*Z$/);
+    expect(evt.summary).not.toContain("sk-abcdefghijklmnop1234");
+  });
+
+  it("omits summary key when not provided", () => {
+    const sink = vi.fn();
+    new AuditLog(sink).record({ sessionId: "s1", toolName: "Read", decision: "allow" });
+    const evt = sink.mock.calls[0][0];
+    expect(evt.summary).toBeUndefined();
+  });
+});
+
+describe("redactSecrets size cap (defense against regex DoS)", () => {
+  it("refuses to redact inputs larger than the cap", () => {
+    const huge = "sk-abcdefghijklmnop1234\n" + "x".repeat(200_000);
+    const r = redactSecrets(huge);
+    // We don't run the regex suite on huge input — instead we
+    // return a short marker that prevents the leak entirely.
+    expect(r).toContain("[input too large to redact");
+  });
+
+  it("summarizeInput pre-truncates huge inputs before redact", () => {
+    const huge = { command: "echo " + "x".repeat(200_000) };
+    const s = summarizeInput(huge, 120);
+    // The pre-truncation kicks in, so we DON'T see the
+    // "input too large" path — the redact pass gets a
+    // truncated string and returns a normal summary.
+    expect(s).not.toContain("[input too large");
+    expect(s.length).toBeLessThanOrEqual(121);
+  });
+});

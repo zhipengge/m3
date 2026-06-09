@@ -2,6 +2,7 @@ import { App } from "@slack/bolt";
 import type { ChannelPlugin } from "@m3/channels";
 import type { M3Config } from "@m3/config";
 import { slackMessageToInbound } from "./slack/inbound.js";
+import { withChannelLogFile } from "./log-sink.js";
 
 const boltApps = new Map<string, App>();
 
@@ -39,6 +40,10 @@ export const slackPlugin: ChannelPlugin = {
         return;
       }
 
+      // Mirror runtime.log to ~/.m3/logs/slack/<account>/<date>.log
+      // so a socket-mode reconnect can be debugged post-mortem.
+      const fileRuntime = withChannelLogFile("slack", accountId, runtime);
+
       const app = new App({
         token: botToken,
         appToken,
@@ -50,7 +55,7 @@ export const slackPlugin: ChannelPlugin = {
         if ("bot_id" in event && event.bot_id) return;
 
         const inbound = await slackMessageToInbound({
-          runtime,
+          runtime: fileRuntime,
           accountId,
           botToken,
           event: {
@@ -64,18 +69,18 @@ export const slackPlugin: ChannelPlugin = {
         });
 
         if (!inbound.body && !inbound.media?.length) return;
-        await runtime.onInbound(inbound);
+        await fileRuntime.onInbound(inbound);
         void say;
       });
 
       await app.start();
       boltApps.set(`slack:${accountId}`, app);
-      runtime.log(`slack ${accountId}: Socket Mode connected`);
+      fileRuntime.log(`slack ${accountId}: Socket Mode connected`);
 
       abortSignal.addEventListener("abort", () => {
         void app.stop().then(() => {
           boltApps.delete(`slack:${accountId}`);
-          runtime.log(`slack ${accountId}: stopped`);
+          fileRuntime.log(`slack ${accountId}: stopped`);
         });
       });
     },

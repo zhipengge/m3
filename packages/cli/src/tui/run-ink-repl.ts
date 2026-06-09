@@ -10,7 +10,7 @@ export type InkReplOptions = {
   config: M3Config;
   workspace?: string;
   dashboardUrl?: string;
-  onLine: (line: string) => void | Promise<void>;
+  onLine: (line: string, media?: import("../interactive-repl.js").ReplMedia) => void | Promise<void>;
 };
 
 export async function runInkRepl(options: InkReplOptions): Promise<void> {
@@ -32,6 +32,15 @@ export async function runInkRepl(options: InkReplOptions): Promise<void> {
     onSystem(text) {
       getReplUiSink()?.onSystem(text);
     },
+    onTokens(usage) {
+      getReplUiSink()?.onTokens?.(usage);
+    },
+    onToolUse(info) {
+      getReplUiSink()?.onToolUse?.(info);
+    },
+    onToolResult(info) {
+      getReplUiSink()?.onToolResult?.(info);
+    },
   };
 
   const { waitUntilExit } = render(
@@ -40,6 +49,8 @@ export async function runInkRepl(options: InkReplOptions): Promise<void> {
       workspace: options.workspace,
       dashboardUrl: options.dashboardUrl,
       initialThinkingExpanded: options.config.agent.thinkingDisplay === "expanded",
+      channelPermissionMode: options.config.agent.channelPermissionMode ?? "bypassPermissions",
+      costCapUsd: options.config.agent.costCapUsd,
       onSubmit: options.onLine,
     }),
     {

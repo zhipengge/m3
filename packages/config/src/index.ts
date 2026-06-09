@@ -6,3 +6,6 @@ export * from "./secrets.js";
 export * from "./resolve-model.js";
 export * from "./model-catalog.js";
 export * from "./workspace.js";
+export * from "./fs-utils.js";
+export * from "./last-model.js";
+export * from "./workspace-store.js";

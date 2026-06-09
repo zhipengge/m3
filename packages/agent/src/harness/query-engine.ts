@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentConfig, ResolvedModel } from "@m3/config";
 import { resolveAgentWorkspace } from "@m3/config";
 import type { PermissionHandler } from "../permissions/manager.js";
-import { runQueryLoop } from "./query-loop.js";
+import { runQueryLoopSafe } from "./query-loop.js";
 import type { HarnessEvent } from "./types.js";
 import { SessionMessageStore } from "../session/message-store.js";
 import { collectTools } from "../tools/tool-source.js";
@@ -28,6 +28,7 @@ export class QueryEngine {
     resume?: boolean;
     permissionMode?: AgentConfig["permissionMode"];
     permissionHandler?: PermissionHandler;
+    attachments?: Array<{ type: "image" | "file"; path: string; mimeType?: string }>;
   }): AsyncGenerator<HarnessEvent, { text: string; sessionId: string }> {
     const sessionId = params.sessionId ?? randomUUID();
     const cwd = params.cwd ?? resolveAgentWorkspace(this.options.agent);
@@ -40,8 +41,17 @@ export class QueryEngine {
         this.options.agent.sandbox?.allowReadOutside ?? DEFAULT_SANDBOX.allowReadOutside,
     };
     const { tools, systemPrompt } = await collectTools(this.options.agent);
+    // C7: layer in project-memory (CLAUDE.md / AGENTS.md) on top
+    // of the tool-derived system prompt. The two are independent
+    // concerns — skills / MCP / memory each contribute their own
+    // fragment; project memory is filesystem-based and a
+    // user-controlled override surface.
+    const { loadProjectMemory } = await import("../project-memory.js");
+    const projectMem = loadProjectMemory({ cwd: this.options.agent.cwd });
+    const { SnapshotStore } = await import("../session/snapshot-store.js");
+    const snapshots = new SnapshotStore();
 
-    const loop = runQueryLoop({
+    const loop = runQueryLoopSafe({
       prompt: params.prompt,
       sessionId,
       cwd,
@@ -54,8 +64,11 @@ export class QueryEngine {
       resumeMessages,
       sandbox,
       bashEnvAllow: this.options.agent.sandbox?.bashEnvAllow,
-      extraSystem: systemPrompt || undefined,
+      extraSystem: [systemPrompt, projectMem.block].filter(Boolean).join("\n\n") || undefined,
       permissionHandler: params.permissionHandler,
+      attachments: params.attachments,
+      allowPatterns: this.options.agent.permissions?.allow ?? [],
+      denyPatterns: this.options.agent.permissions?.deny ?? [],
     });
 
     let result = await loop.next();
@@ -64,7 +77,42 @@ export class QueryEngine {
       result = await loop.next();
     }
 
-    this.store.save(sessionId, result.value.messages);
-    return { text: result.value.text, sessionId };
+    // `result.value` is QueryLoopResult | undefined: runQueryLoopSafe
+    // yields a final tick carrying the underlying result and returns
+    // it; if the loop exited with an exception, the for-await above
+    // re-throws and we never reach this point. Still — narrow for TS.
+    const finalResult = result.value;
+    if (!finalResult) {
+      throw new Error("agent run exited without producing a result");
+    }
+    this.store.save(sessionId, finalResult.messages);
+    // Auto-snapshot every 10 turns — the snapshot copy is cheap
+    // (one file write per N turns) and gives the user a /rewind
+    // escape hatch if the agent wandered. The store is no-op
+    // safe — a write failure here is logged but doesn't break
+    // the agent run.
+    try {
+      if (finalResult.turns > 0 && finalResult.turns % 10 === 0) {
+        snapshots.save(sessionId, finalResult.turns, finalResult.messages, "auto");
+        // GC the per-session directory to keep disk usage bounded.
+        // A 1k-turn session with no cap would leave ~100 verbatim
+        // copies of the transcript; the cap keeps ~20 turns of
+        // rewind history. GC is best-effort; a failure here is
+        // logged but never breaks the run.
+        try {
+          const deleted = snapshots.gc(sessionId);
+          if (deleted > 0) {
+            process.stderr.write(`[m3] snapshot gc pruned ${deleted} old snapshot(s)\n`);
+          }
+        } catch {
+          /* best-effort */
+        }
+      }
+    } catch (err) {
+      process.stderr.write(
+        `[m3] snapshot save failed: ${err instanceof Error ? err.message : err}\n`,
+      );
+    }
+    return { text: finalResult.text, sessionId };
   }
 }

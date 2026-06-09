@@ -9,10 +9,34 @@ export type LlmTurnParams = {
   abortSignal?: AbortSignal;
 };
 
+/**
+ * Per-turn token usage returned by the LLM provider. OpenAI splits into
+ * prompt_tokens / completion_tokens; Anthropic adds cache_read /
+ * cache_creation_input_tokens. We normalize to a single shape that the
+ * harness, status bar, and `/cost` command can all consume uniformly.
+ */
+export type TokenUsage = {
+  input: number;
+  output: number;
+  /** Tokens served from a provider-side cache (Anthropic prompt cache). */
+  cacheRead?: number;
+  /** Tokens written to the cache for the next turn. */
+  cacheCreation?: number;
+  /** Provider-reported total, or input+output when missing. */
+  total: number;
+  /**
+   * USD cost for THIS turn, computed in the LLM provider from
+   * `ResolvedModel.pricing`. Missing when the model has no pricing
+   * configured (default behaviour: status bar shows `—`).
+   */
+  costUsd?: number;
+};
+
 export type LlmTurnResult = {
   assistantContent: ContentBlock[];
   text: string;
   stopReason: "end_turn" | "tool_use" | "max_tokens" | "error" | null;
+  usage?: TokenUsage;
 };
 
 export type LlmStreamCallbacks = {

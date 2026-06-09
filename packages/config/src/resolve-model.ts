@@ -40,6 +40,14 @@ export function resolveModel(
     maxTokens,
     maxContextTokens: modelEntry.maxContextTokens ?? maxTokens * 4,
     alias: modelEntry.alias,
+    ...(modelEntry.inputPricePerMTok !== undefined || modelEntry.outputPricePerMTok !== undefined
+      ? {
+          pricing: {
+            input: modelEntry.inputPricePerMTok ?? 0,
+            output: modelEntry.outputPricePerMTok ?? 0,
+          },
+        }
+      : {}),
   };
 }
 

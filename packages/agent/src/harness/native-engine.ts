@@ -28,6 +28,7 @@ export class NativeAgentEngine implements AgentEngine {
       resume: options.resume,
       permissionMode: options.permissionMode,
       permissionHandler: options.permissionHandler,
+      attachments: options.attachments,
     });
 
     let result = await gen.next();

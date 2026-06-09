@@ -1,7 +1,7 @@
 import fs from "node:fs";
-import path from "node:path";
 import { z } from "zod";
 import { expandHome } from "./schema.js";
+import { atomicWriteFileSync } from "./fs-utils.js";
 
 export const DEFAULT_SECRETS_PATH = "~/.m3/secrets.json";
 
@@ -33,9 +33,11 @@ export function loadSecrets(secretsPath?: string): M3Secrets {
 
 export function saveSecrets(secrets: M3Secrets, secretsPath?: string): void {
   const resolved = expandHome(secretsPath ?? DEFAULT_SECRETS_PATH);
-  fs.mkdirSync(path.dirname(resolved), { recursive: true });
-  fs.writeFileSync(resolved, JSON.stringify(secrets, null, 2));
-  fs.chmodSync(resolved, 0o600);
+  // Atomic write at 0o600. A crash mid-write would otherwise leave a
+  // partial JSON file that Zod rejects → loadSecrets returns {} →
+  // the next save overwrites the user's real secrets with the empty
+  // parsed defaults. Atomic + the explicit mode prevents both.
+  atomicWriteFileSync(resolved, JSON.stringify(secrets, null, 2));
 }
 
 export function secretsExists(secretsPath?: string): boolean {

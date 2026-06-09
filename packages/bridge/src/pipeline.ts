@@ -9,6 +9,9 @@ import {
   pushWebChatDelta,
   pushWebChatReasoningDelta,
   pushWebChatSystem,
+  pushWebChatTokens,
+  pushWebChatToolResult,
+  pushWebChatToolUse,
 } from "@m3/channel-extensions";
 import {
   createReplyDispatcher,
@@ -24,7 +27,9 @@ import {
   applyCommandResult,
   CommandBridge,
   isClearSessionCommand,
+  isClearUndoCommand,
   isCompactSessionCommand,
+  isMemoryCommand,
   isReplyOnlyCommand,
 } from "./command-bridge.js";
 import { agentConfigForChannel } from "./channel-permissions.js";
@@ -73,6 +78,28 @@ function isSenderAllowed(
 export class MessagePipeline {
   private readonly pairingStore: PairingStore;
   private readonly sessionLock: SessionLock;
+  /**
+   * C1: resolve account-scoped provider config (provider ref +
+   * localOnly flag) for a given (channel, account) pair. Returns
+   * the defaults (no provider, not localOnly) when the channel or
+   * account isn't in m3.json.
+   */
+  private accountProviderConfig(
+    channelId: string,
+    accountId: string,
+  ): { provider?: string; localOnly: boolean } {
+    const ch = (this.options.config.channels as Record<string, unknown>)[channelId] as
+      | Record<string, { provider?: string; localOnly?: boolean }>
+      | undefined;
+    if (!ch) return { localOnly: false };
+    const acc = ch[accountId];
+    if (!acc) return { localOnly: false };
+    return {
+      provider: acc.provider,
+      localOnly: Boolean(acc.localOnly),
+    };
+  }
+
   private readonly transcriptStore = new SessionMessageStore();
   private readonly goalStore = new GoalStore();
 
@@ -186,11 +213,29 @@ export class MessagePipeline {
       let contextUsageRatio: number | undefined;
       try {
         const secrets = loadSecrets();
-        const resolved = resolveModel(
-          this.options.config,
-          secrets,
-          this.options.config.agent.model,
+        // C1: account-scoped provider override. If this
+        // (channel, accountId) pair has a `provider` set in
+        // m3.json, use that as the model ref instead of the
+        // global `agent.model`. Combined with `localOnly: true`,
+        // this is the privacy-mode-channel primitive: a
+        // customer-support Feishu account can be pinned to a
+        // local model with a hard guard against cloud fallback.
+        const accountConfig = this.accountProviderConfig(
+          finalized.channelId,
+          finalized.accountId,
         );
+        const modelRef = accountConfig.provider ?? this.options.config.agent.model;
+        const resolved = resolveModel(this.options.config, secrets, modelRef);
+        if (accountConfig.localOnly && !resolved.api.startsWith("local/")) {
+          // Guard: refuse to use a non-local provider when the
+          // account is flagged localOnly. Surfaces in the reply
+          // so a misconfigured account doesn't silently degrade
+          // to a cloud LLM.
+          await dispatcher.deliver({
+            text: `Account ${finalized.channelId}:${finalized.accountId} is localOnly but the resolved model "${modelRef}" is not a local provider. Refusing to send data. Check m3.json → channels.<ch>.<acc>.provider.`,
+          });
+          return;
+        }
         contextUsageRatio = estimateContextUsageRatio({
           messages: priorMessages,
           maxContextTokens: resolved.maxContextTokens,
@@ -216,9 +261,128 @@ export class MessagePipeline {
         this.options.sessionMapper.remove(route.sessionKey);
         this.goalStore.clear(route.sessionKey);
         if (mapping?.claudeSessionId) {
-          this.transcriptStore.clear(mapping.claudeSessionId);
+          if (cmdResult.hard) {
+            // Legacy behavior: unlink. The user explicitly opted in
+            // with `/clear hard` so we don't second-guess.
+            this.transcriptStore.clear(mapping.claudeSessionId);
+            await dispatcher.deliver({ text: "Session context cleared (hard delete)." });
+          } else {
+            // Default: soft-delete to _archive/. Recoverable with
+            // `/clear undo`. The archive path is returned so the
+            // channel can show the user where to find it (e.g. a
+            // /status row, or in TUI mode a "to recover:" line).
+            const archivePath = this.transcriptStore.archive(mapping.claudeSessionId);
+            const where = archivePath ? ` (archived to ${archivePath})` : "";
+            await dispatcher.deliver({
+              text: `Session context cleared${where}. Recover with /clear undo.`,
+            });
+          }
+        } else {
+          await dispatcher.deliver({ text: "Session context cleared." });
         }
-        await dispatcher.deliver({ text: "Session context cleared." });
+        return;
+      }
+      if (cmdResult && isClearUndoCommand(cmdResult)) {
+        if (mapping?.claudeSessionId) {
+          const restored = this.transcriptStore.restoreLatestArchive(mapping.claudeSessionId);
+          await dispatcher.deliver({
+            text: restored
+              ? "Session context restored from archive."
+              : "Nothing to restore (no archive for this session).",
+          });
+        } else {
+          await dispatcher.deliver({ text: "No active session to restore." });
+        }
+        return;
+      }
+      if (cmdResult && isMemoryCommand(cmdResult)) {
+        // C3 part 2 + D3: real /memory handler. Reads, appends, or
+        // searches the workspace memory store, keyed by ws-id
+        // (not basename — unrelated projects no longer share
+        // memory). Imports @m3/agent + @m3/config lazily.
+        try {
+          const { MemoryStore } = await import("@m3/agent");
+          const { resolveWorkspace } = await import("@m3/config");
+          const ws = resolveWorkspace(this.options.config.agent.cwd);
+          const store = new MemoryStore();
+          // Migrate a legacy basename file once per workspace.
+          try {
+            store.migrateBasenameToWorkspaceId(ws.absPath, ws.id);
+          } catch {
+            /* best-effort */
+          }
+          if (cmdResult.subcommand === "append") {
+            if (!cmdResult.argument.trim()) {
+              await dispatcher.deliver({
+                text: "Usage: /memory append <note>",
+              });
+              return;
+            }
+            store.append(ws.id, cmdResult.argument);
+            await dispatcher.deliver({
+              text: `Appended to ~/.m3/memory/${ws.id}.md (workspace: ${ws.label})`,
+            });
+          } else if (cmdResult.subcommand === "search") {
+            if (!cmdResult.argument.trim()) {
+              await dispatcher.deliver({
+                text: "Usage: /memory search <query>",
+              });
+              return;
+            }
+            const hits = store.search(ws.id, cmdResult.argument);
+            if (hits.length === 0) {
+              await dispatcher.deliver({ text: "no matches" });
+            } else {
+              await dispatcher.deliver({
+                text: `${hits.length} match(es):\n${hits.join("\n---\n")}`,
+              });
+            }
+          } else {
+            // read
+            const content = store.readAll(ws.id);
+            await dispatcher.deliver({
+              text: content || `(no memory notes for workspace ${ws.label} / ${ws.id})`,
+            });
+          }
+        } catch (err) {
+          await dispatcher.deliver({
+            text: `Memory: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+        return;
+      }
+      if (cmdResult && cmdResult.action === "list_mcp_servers") {
+        // B8: pull the real listing from the MCP pool and ship it
+        // back to the channel. We can't pull this from
+        // @m3/commands because commands must stay decoupled from
+        // agent — the bridge is the only place that knows about
+        // both.
+        try {
+          const { listServers, listAllMcpTools } = await import("@m3/agent");
+          const servers = listServers();
+          if (servers.length === 0) {
+            await dispatcher.deliver({
+              text: `No MCP servers connected.\nConfig: ${this.options.config.agent.mcp?.config ?? "(not set)"}\nPrefix: ${this.options.config.agent.mcp?.toolPrefix ?? "mcp__"}`,
+            });
+          } else {
+            const tools = await listAllMcpTools(servers);
+            const byServer = new Map<string, number>();
+            for (const t of tools) {
+              byServer.set(t.serverId, (byServer.get(t.serverId) ?? 0) + 1);
+            }
+            const rows = servers.map((s) => {
+              const count = byServer.get(s.id) ?? 0;
+              return `  ${s.id}\t${count} tool${count === 1 ? "" : "s"}`;
+            });
+            await dispatcher.deliver({
+              text: `MCP servers (${servers.length}):\n${rows.join("\n")}\n\nConfig: ${this.options.config.agent.mcp?.config ?? "(not set)"}\nPrefix: ${this.options.config.agent.mcp?.toolPrefix ?? "mcp__"}`,
+            });
+          }
+        } catch (err) {
+          await dispatcher.deliver({
+            text: `MCP listing failed: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
         return;
       }
       if (cmdResult && isCompactSessionCommand(cmdResult)) {
@@ -241,6 +405,25 @@ export class MessagePipeline {
         });
         return;
       }
+      if (cmdResult && cmdResult.action === "set_model") {
+        // B6 + D4: persist the user's choice to the
+        // per-workspace last-model file. Mid-stream engine
+        // change is a refactor away, so the change applies to
+        // the next turn / next session.
+        try {
+          const { saveLastModel, resolveWorkspace } = await import("@m3/config");
+          const ws = resolveWorkspace(this.options.config.agent.cwd);
+          saveLastModel(cmdResult.model, ws.id);
+          await dispatcher.deliver({
+            text: `[model] Saved "${cmdResult.model}" to ~/.m3/last-model.${ws.id}.json (workspace: ${ws.label}). The next session will use it; the current in-flight engine is still using its loaded model.`,
+          });
+        } catch (err) {
+          await dispatcher.deliver({
+            text: `[model] Failed to persist: ${err instanceof Error ? err.message : err}`,
+          });
+        }
+        return;
+      }
       if (cmdResult && isReplyOnlyCommand(cmdResult)) {
         await dispatcher.deliver({ text: cmdResult.action === "reply_only" ? cmdResult.text : "" });
         return;
@@ -250,6 +433,11 @@ export class MessagePipeline {
       if (cmdResult) {
         prompt = applyCommandResult(cmdResult, prompt);
       }
+      // `attachments` only carry image media that the engine should send
+      // as vision input. Non-image media already lives in `prompt` (as
+      // path strings the LLM can Read), so we filter to image-only here
+      // and let `inboundToPrompt` keep its existing behaviour for files.
+      const imageAttachments = (finalized.media ?? []).filter((m) => m.type === "image");
 
       this.options.sessionMapper.upsert({
         sessionKey: route.sessionKey,
@@ -272,6 +460,18 @@ export class MessagePipeline {
         onReasoningDelta:
           finalized.channelId === "webchat"
             ? (delta) => pushWebChatReasoningDelta(finalized.peerId, delta)
+            : undefined,
+        onTokens:
+          finalized.channelId === "webchat"
+            ? (usage) => pushWebChatTokens(finalized.peerId, usage)
+            : undefined,
+        onToolUse:
+          finalized.channelId === "webchat"
+            ? (info) => pushWebChatToolUse(finalized.peerId, info)
+            : undefined,
+        onToolResult:
+          finalized.channelId === "webchat"
+            ? (info) => pushWebChatToolResult(finalized.peerId, info)
             : undefined,
         onSystemNotice:
           finalized.channelId === "webchat"
@@ -297,6 +497,7 @@ export class MessagePipeline {
         cwd,
         resume: Boolean(sessionId),
         permissionMode: channelAgent.permissionMode,
+        ...(imageAttachments.length > 0 ? { attachments: imageAttachments } : {}),
         permissionHandler,
       })) {
         await stream.handleEvent(evt);

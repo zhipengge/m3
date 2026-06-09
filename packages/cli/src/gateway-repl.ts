@@ -33,7 +33,7 @@ export async function runGatewayRepl(
     dashboardUrl,
     repromptAfterSubmit: false,
     showMenuOnStart: opts.plain,
-    onLine: async (line) => {
+    onLine: async (line, media) => {
       const runtime = {
         config,
         log: (msg: string) => {
@@ -41,7 +41,9 @@ export async function runGatewayRepl(
         },
         onInbound: (msg: import("@m3/channels").InboundMessage) => server.dispatchInbound(msg),
       };
-      await simulateWebChatInbound(runtime, TERMINAL_PEER, line.trim());
+      // Forward any clipboard-pasted media (Ctrl+V in the Ink REPL) so
+      // the engine receives image attachments as vision input.
+      await simulateWebChatInbound(runtime, TERMINAL_PEER, line.trim(), media);
     },
   });
 

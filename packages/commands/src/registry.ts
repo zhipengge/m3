@@ -22,9 +22,19 @@ export type CommandContext = {
 export type CommandResult =
   | { action: "reply_only"; text: string }
   | { action: "inject_prompt"; prompt: string }
-  | { action: "clear_session" }
+  | { action: "clear_session"; hard?: boolean }
+  | { action: "clear_undo" }
   | { action: "compact_session"; focus?: string }
   | { action: "set_goal"; condition: string }
+  | { action: "set_model"; model: string }
+  | { action: "set_permission_mode"; mode: "default" | "acceptEdits" | "plan" | "bypassPermissions" }
+  | { action: "list_mcp_servers" }
+  | {
+      action: "memory";
+      subcommand: "read" | "append" | "search";
+      argument: string;
+      sessionKey: string;
+    }
   | { action: "passthrough" };
 
 export type CommandHandler = (args: string, ctx: CommandContext) => CommandResult;
@@ -98,8 +108,23 @@ const BUILTIN_COMMANDS: Record<string, CommandHandler> = {
     action: "reply_only",
     text: formatContextUsage(ctx),
   }),
-  clear: () => ({ action: "clear_session" }),
-  reset: () => ({ action: "clear_session" }),
+  clear: (args) => {
+    const arg = args.trim().toLowerCase();
+    if (arg === "undo") {
+      return { action: "clear_undo" };
+    }
+    if (arg === "hard" || arg === "--hard") {
+      // Force the legacy unlink semantics. Default is now soft-delete
+      // (archive + /clear undo) so accidental /clear isn't fatal.
+      return { action: "clear_session", hard: true };
+    }
+    return { action: "clear_session" };
+  },
+  reset: (args) => {
+    const arg = args.trim().toLowerCase();
+    if (arg === "undo") return { action: "clear_undo" };
+    return { action: "clear_session" };
+  },
   new: () => ({ action: "clear_session" }),
   compact: (args) => ({
     action: "compact_session",
@@ -143,35 +168,72 @@ const BUILTIN_COMMANDS: Record<string, CommandHandler> = {
     if (!query) {
       return {
         action: "reply_only",
-        text: `Active model: ${ctx.config.agent.model}\nList: m3 models\nSwitch: m3 model <ref>`,
+        text: `Active model: ${ctx.config.agent.model}\nList: m3 models\nSwitch: m3 model <ref> (persists to ~/.m3/last-model.<ws-id>.json — per-workspace)`,
+      };
+    }
+    // B6: persist the user's choice to a per-session override file
+    // so the next session can read it. The TUI also reads it for the
+    // StatusBar so the user sees the pending model immediately. The
+    // current in-flight engine call still uses the config-resolved
+    // model — switching mid-stream would require an engine refactor
+    // (the LLM provider is bound to the engine instance).
+    return {
+      action: "set_model",
+      model: query,
+    };
+  },
+  permissions: (args, ctx) => {
+    const arg = args.trim().toLowerCase();
+    if (arg === "default" || arg === "acceptedits" || arg === "plan" || arg === "bypasspermissions") {
+      const normalized = arg === "acceptedits" ? "acceptEdits" : arg === "bypasspermissions" ? "bypassPermissions" : arg;
+      return { action: "set_permission_mode", mode: normalized };
+    }
+    if (arg) {
+      return {
+        action: "reply_only",
+        text: `Unknown permission mode: ${arg}\nUsage: /permissions [default|acceptEdits|plan|bypassPermissions]`,
       };
     }
     return {
       action: "reply_only",
-      text: `To switch model, run in terminal:\n  m3 model ${query}\n\n(/model in chat does not write m3.json)`,
+      text: `Permission mode: ${ctx.config.agent.permissionMode}\nChannel inbound: ${ctx.config.agent.channelPermissionMode ?? "bypassPermissions"}\n\nUsage: /permissions [default|acceptEdits|plan|bypassPermissions]\nIn Ink REPL: type /permissions to open an interactive picker.`,
     };
   },
-  permissions: (_args, ctx) => ({
-    action: "reply_only",
-    text: `Permission mode: ${ctx.config.agent.permissionMode}\nChannel inbound: ${ctx.config.agent.channelPermissionMode ?? "bypassPermissions"}`,
-  }),
 };
 
 /** Phase 2: extended CC slash command registry. */
 const PHASE2_COMMANDS: Record<string, CommandHandler> = {
-  mcp: (_args, ctx) => ({
-    action: "reply_only",
-    text: [
-      "MCP tools load via agent.mcp in ~/.m3/m3.json",
-      `config: ${ctx.config.agent.mcp?.config ?? "(not set)"}`,
-      `prefix: ${ctx.config.agent.mcp?.toolPrefix ?? "mcp__"}`,
-      "See examples/mcp.json for Claude Desktop-compatible mcpServers shape.",
-    ].join("\n"),
+  mcp: () => ({
+    // B8: the bridge layer intercepts this and replaces the reply
+    // with a real listing from listServers() + listAllMcpTools().
+    // We can't call those directly here because @m3/commands must
+    // not depend on @m3/agent (the bridge is the only place that
+    // bridges them).
+    action: "list_mcp_servers",
   }),
   skills: () => ({ action: "reply_only", text: "Skills: configure via agent.skills.dirs" }),
   agents: () => ({ action: "reply_only", text: "Sub-agents enabled via agent.subAgents" }),
   hooks: () => ({ action: "reply_only", text: "Hooks: configure via hooks in m3.json" }),
-  memory: () => ({ action: "reply_only", text: "Memory: uses CLAUDE.md / project memory files" }),
+  memory: (args, ctx) => {
+    // C3 part 2: real handler that reads / appends / searches
+    // the cross-session memory store. Without args → read all
+    // notes. \`append <note>\` writes. \`search <query>\` greps.
+    // The actual store lives in @m3/agent; the bridge layer
+    // imports it lazily so commands stays decoupled.
+    const parts = args.trim().match(/^(\S+)\s*(.*)$/);
+    const subRaw = parts?.[1]?.toLowerCase() ?? "read";
+    const sub: "read" | "append" | "search" =
+      subRaw === "append" || subRaw === "search" || subRaw === "read"
+        ? subRaw
+        : "read";
+    const rest = parts?.[2] ?? "";
+    return {
+      action: "memory",
+      subcommand: sub,
+      argument: rest,
+      sessionKey: ctx.sessionKey,
+    };
+  },
   review: () => ({
     action: "inject_prompt",
     prompt: "Review the recent code changes and provide feedback.",

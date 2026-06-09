@@ -1,6 +1,6 @@
 import fs from "node:fs";
-import path from "node:path";
 import { DEFAULT_CONFIG_PATH, expandHome, M3ConfigSchema, type M3Config } from "./schema.js";
+import { atomicWriteFileSync } from "./fs-utils.js";
 
 export * from "./schema.js";
 
@@ -15,8 +15,10 @@ export function loadConfig(configPath?: string): M3Config {
 
 export function saveConfig(config: M3Config, configPath?: string): void {
   const resolved = expandHome(configPath ?? DEFAULT_CONFIG_PATH);
-  fs.mkdirSync(path.dirname(resolved), { recursive: true });
-  fs.writeFileSync(resolved, JSON.stringify(config, null, 2));
+  // m3.json may carry webhook paths, tokens, and other sensitive routing
+  // data. Write atomically and at 0o600 so a partial write doesn't
+  // corrupt the config and a multi-user host can't read it.
+  atomicWriteFileSync(resolved, JSON.stringify(config, null, 2));
 }
 
 export function resolveConfigPath(configPath?: string): string {

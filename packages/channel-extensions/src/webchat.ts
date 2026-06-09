@@ -15,6 +15,20 @@ export type WebChatReplSink = {
   onDelta?: (delta: string) => void;
   onReasoningDelta?: (delta: string) => void;
   onSystem?: (text: string) => void;
+  onTokens?: (usage: WebChatTokenUsage) => void;
+  onToolUse?: (info: { id: string; name: string; input: unknown }) => void;
+  onToolResult?: (info: { id: string; name: string; isError?: boolean }) => void;
+};
+
+/** Token usage event forwarded to the REPL. `cumulative` is the
+ *  session running total so the consumer doesn't need to sum. */
+export type WebChatTokenUsage = {
+  input: number;
+  output: number;
+  total: number;
+  cacheRead?: number;
+  cacheCreation?: number;
+  cumulative: { input: number; output: number; total: number };
 };
 
 type WebChatClient = {
@@ -24,10 +38,33 @@ type WebChatClient = {
   onDelta?: (delta: string) => void;
   onReasoningDelta?: (delta: string) => void;
   onSystem?: (text: string) => void;
+  onTokens?: (usage: WebChatTokenUsage) => void;
+  onToolUse?: (info: { id: string; name: string; input: unknown }) => void;
+  onToolResult?: (info: { id: string; name: string; isError?: boolean }) => void;
 };
 
 const clients = new Map<string, WebChatClient>();
+
+/**
+ * Pending outbound buffer for peers that haven't registered a client yet.
+ * Bounded per peer (default 32) to prevent unbounded memory growth when a
+ * bot is firing messages at disconnected peers. Drop-oldest on overflow.
+ */
+const PENDING_QUEUE_MAX = 32;
 const pendingOutbound = new Map<string, string[]>();
+
+/** Bounded replacement for `pendingOutbound.get(key).push(msg)`. */
+function enqueuePending(key: string, msg: string): void {
+  const queue = pendingOutbound.get(key);
+  if (queue) {
+    if (queue.length >= PENDING_QUEUE_MAX) {
+      queue.shift(); // drop oldest
+    }
+    queue.push(msg);
+  } else {
+    pendingOutbound.set(key, [msg]);
+  }
+}
 
 function queueKey(channelId: string, accountId: string, peerId: string): string {
   return `${channelId}:${accountId}:${peerId}`;
@@ -47,6 +84,9 @@ function normalizeHandler(
     onDelta: handler.onDelta,
     onReasoningDelta: handler.onReasoningDelta,
     onSystem: handler.onSystem,
+    onTokens: handler.onTokens,
+    onToolUse: handler.onToolUse,
+    onToolResult: handler.onToolResult,
   };
 }
 
@@ -55,14 +95,33 @@ export function registerWebChatClient(
   handler: ((text: string) => void) | WebChatReplSink,
 ): () => void {
   const client = normalizeHandler(peerId, handler);
+  // If a prior client existed for this peer (e.g. the TUI re-mounted, or a
+  // previous run left an orphan), drop its entry cleanly. The previous
+  // returned cleanup callback is now a no-op — that's safe because the
+  // unregister function checks for the live entry rather than identity.
+  const prior = clients.get(peerId);
+  void prior;
   clients.set(peerId, client);
   const key = queueKey("webchat", "default", peerId);
-  const pending = pendingOutbound.get(key) ?? [];
-  for (const msg of pending) {
-    client.deliver(msg);
+  const pending = pendingOutbound.get(key);
+  if (pending) {
+    for (const msg of pending) client.deliver(msg);
+    pendingOutbound.delete(key);
   }
-  pendingOutbound.delete(key);
-  return () => clients.delete(peerId);
+  let unregistered = false;
+  return () => {
+    if (unregistered) return;
+    unregistered = true;
+    // Only clear if our entry is still the live one (a fresh registration
+    // would have replaced the map slot and is now the live owner).
+    if (clients.get(peerId) === client) {
+      clients.delete(peerId);
+    }
+  };
+}
+
+export function unregisterWebChatClient(peerId: string): void {
+  clients.delete(peerId);
 }
 
 /** Push a streaming token to the terminal REPL when registered. */
@@ -78,10 +137,29 @@ export function pushWebChatSystem(peerId: string, text: string): void {
   clients.get(peerId)?.onSystem?.(text);
 }
 
+export function pushWebChatTokens(peerId: string, usage: WebChatTokenUsage): void {
+  clients.get(peerId)?.onTokens?.(usage);
+}
+
+export function pushWebChatToolUse(
+  peerId: string,
+  info: { id: string; name: string; input: unknown },
+): void {
+  clients.get(peerId)?.onToolUse?.(info);
+}
+
+export function pushWebChatToolResult(
+  peerId: string,
+  info: { id: string; name: string; isError?: boolean },
+): void {
+  clients.get(peerId)?.onToolResult?.(info);
+}
+
 export function simulateWebChatInbound(
   runtime: ChannelRuntimeContext,
   peerId: string,
   body: string,
+  media?: InboundMessage["media"],
 ): Promise<void> {
   const message: InboundMessage = {
     channelId: "webchat",
@@ -89,6 +167,7 @@ export function simulateWebChatInbound(
     peerId,
     peerKind: "dm",
     body,
+    media,
   };
   return runtime.onInbound(message);
 }
@@ -100,10 +179,11 @@ const outbound: ChannelOutboundAdapter = {
       client.deliver(message.body);
       return;
     }
+    // No live client — buffer up to PENDING_QUEUE_MAX messages, drop
+    // oldest on overflow. A bot that never connects to a peer won't
+    // OOM the process.
     const key = queueKey(message.channelId, message.accountId, message.peerId);
-    const queue = pendingOutbound.get(key) ?? [];
-    queue.push(message.body);
-    pendingOutbound.set(key, queue);
+    enqueuePending(key, message.body);
   },
   async sendTyping(params: {
     channelId: string;
@@ -129,7 +209,7 @@ export const webchatPlugin: ChannelPlugin = {
   meta: { label: "WebChat", docsUrl: "https://docs.openclaw.ai/channels/webchat" },
   capabilities: {
     chatTypes: ["dm"],
-    media: false,
+    media: true,
     streaming: true,
   },
   config: {

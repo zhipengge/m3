@@ -20,20 +20,51 @@ class StreamWake extends Error {
 export async function* runQueryLoop(
   options: QueryLoopOptions,
 ): AsyncGenerator<HarnessEvent, QueryLoopResult> {
-  const permissions = new PermissionManager(options.permissionMode);
+  const permissions = new PermissionManager(
+    options.permissionMode,
+    options.allowPatterns ?? [],
+    options.denyPatterns ?? [],
+  );
   if (options.permissionHandler) {
     permissions.setHandler(options.permissionHandler);
   }
   const tools = options.tools;
   const sessionId = options.sessionId;
   const messages: HarnessMessage[] = options.resumeMessages ? [...options.resumeMessages] : [];
-  messages.push({ role: "user", content: options.prompt });
+  // Build the first user turn — string when there are no attachments, or
+  // a `ContentBlock[]` when at least one image is attached. Non-image
+  // attachments stay in the text body as path references.
+  const hasImageAttachment = options.attachments?.some((m) => m.type === "image");
+  if (hasImageAttachment) {
+    const blocks: ContentBlock[] = [{ type: "text", text: options.prompt || "[image attached]" }];
+    for (const m of options.attachments ?? []) {
+      if (m.type === "image") {
+        blocks.push({
+          type: "image",
+          source: {
+            kind: "path",
+            path: m.path,
+            mimeType: m.mimeType ?? "image/png",
+          },
+        });
+      } else {
+        blocks.push({ type: "text", text: `[file: ${m.path}]` });
+      }
+    }
+    messages.push({ role: "user", content: blocks });
+  } else {
+    messages.push({ role: "user", content: options.prompt });
+  }
 
   yield { type: "session_id", sessionId };
   yield { type: "lifecycle", phase: "start" };
 
   let finalText = "";
   let turns = 0;
+  // Running session-level token totals. The harness has no notion of a
+  // session boundary so the loop just accumulates; the bridge layer
+  // resets this on /clear.
+  const sessionTokens = { input: 0, output: 0, total: 0, costUsd: 0 };
   const llm = getLlmProvider(options.model.api);
 
   const toolCtx = {
@@ -134,6 +165,30 @@ export async function* runQueryLoop(
 
     messages.push({ role: "assistant", content: turn.assistantContent });
 
+    // Emit a token_usage event for every turn that the provider reported
+    // a usage object. Not all providers return one (e.g. legacy mock
+    // engine), so the event is conditional.
+    if (turn.usage) {
+      sessionTokens.input += turn.usage.input;
+      sessionTokens.output += turn.usage.output;
+      sessionTokens.total += turn.usage.total;
+      if (turn.usage.costUsd !== undefined) {
+        sessionTokens.costUsd += turn.usage.costUsd;
+      }
+      const u = turn.usage;
+      yield {
+        type: "token_usage",
+        turn: turns,
+        input: u.input,
+        output: u.output,
+        ...(u.cacheRead !== undefined ? { cacheRead: u.cacheRead } : {}),
+        ...(u.cacheCreation !== undefined ? { cacheCreation: u.cacheCreation } : {}),
+        total: u.total,
+        ...(u.costUsd !== undefined ? { costUsd: u.costUsd } : {}),
+        cumulative: { ...sessionTokens },
+      };
+    }
+
     const toolUses = turn.assistantContent.filter(
       (b): b is ContentBlock & { type: "tool_use" } => b.type === "tool_use",
     );
@@ -175,4 +230,44 @@ export async function* runQueryLoop(
 
   yield { type: "lifecycle", phase: "end" };
   return { text: finalText, sessionId, messages, turns };
+}
+
+// The generator body is the canonical implementation; the wrapper below
+// is the public surface that callers (NativeAgentEngine, mock engine)
+// actually consume. It catches errors thrown by the underlying provider
+// and translates them into a `lifecycle: error` event so the TUI / bridge
+// can surface them — without the wrapper, a thrown error propagates out
+// of the async generator and the spinner hangs forever (the caller has
+// no chance to render a failure message).
+export async function* runQueryLoopSafe(
+  options: QueryLoopOptions,
+): AsyncGenerator<HarnessEvent, QueryLoopResult | undefined> {
+  let result: QueryLoopResult | undefined;
+  try {
+    for await (const [evt, r] of (async function* () {
+      // Forward every event AND capture the final return value in one
+      // pass so callers (QueryEngine) can still persist the transcript.
+      // This is a small inline helper rather than a re-implementation of
+      // runQueryLoop so the two implementations can't drift.
+      const inner = runQueryLoop(options);
+      let next = await inner.next();
+      while (!next.done) {
+        yield [next.value, undefined] as const;
+        next = await inner.next();
+      }
+      yield [undefined, next.value] as const;
+    })()) {
+      if (evt !== undefined) yield evt;
+      if (r !== undefined) result = r;
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    yield { type: "lifecycle", phase: "error", error: message };
+    // Re-throw so the engine.run generator also surfaces the error to
+    // its caller (e.g. the bridge pipeline). The TUI gets BOTH a visible
+    // system message (from the yield above) and a normal exception
+    // path it can react to.
+    throw err;
+  }
+  return result;
 }

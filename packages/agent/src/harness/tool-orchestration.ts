@@ -2,9 +2,10 @@ import type { ToolUseBlock } from "@anthropic-ai/sdk/resources/messages/messages
 import type { ToolContext, ToolDefinition, HarnessEvent } from "../harness/types.js";
 import { findToolByName } from "../tools/registry.js";
 import { PermissionManager } from "../permissions/manager.js";
-import { AuditLog, summarizeInput } from "../security/audit.js";
+import { AuditLog, fileAuditSink, summarizeInput } from "../security/audit.js";
+import { describeToolCall } from "./tool-description.js";
 
-const auditLog = new AuditLog();
+const auditLog = new AuditLog(fileAuditSink);
 
 type ToolBatch = { concurrent: boolean; blocks: ToolUseBlock[] };
 
@@ -75,17 +76,16 @@ async function runSingleTool(
   }
 
   const input = block.input as Record<string, unknown> | undefined;
-  const pathHint =
-    typeof input?.file_path === "string"
-      ? input.file_path
-      : typeof input?.path === "string"
-        ? input.path
-        : undefined;
+  // Concrete one-line description used by the TUI permission prompt and
+  // by the Slack/Feishu fallback formatter — see describeToolCall for
+  // the rules (Bash: <command>, Read: <path>, etc.).
+  const description = describeToolCall(tool.name, input);
   const decision = await permissions.canUseTool({
     toolName: tool.name,
+    toolInput: block.input,
     isReadOnly: Boolean(tool.isReadOnly),
     needsPermission: Boolean(tool.needsPermission),
-    description: pathHint ? `${tool.name}: ${pathHint}` : `Execute ${tool.name}`,
+    description,
     sessionKey: ctx.sessionId,
   });
 

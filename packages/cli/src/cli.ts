@@ -35,8 +35,12 @@ import { runFeishuScanSetup } from "./scan-setup.js";
 import { registerLocalCommand } from "./local-command.js";
 import { registerModelCommands } from "./model-command.js";
 import { registerTerminalPermissionPrompt } from "./terminal-permission.js";
+import { registerConfigCommand } from "./config-command.js";
+import { registerInitCommand } from "./init-command.js";
+import { registerWorkspaceCommand } from "./workspace-command.js";
 import { promptWorkspaceAccess } from "./workspace-grant.js";
 import { getLocalStatus, prepareInferenceBackend } from "@m3/local";
+import { header, status, suggest, c } from "./output.js";
 
 const program = new Command();
 
@@ -83,8 +87,10 @@ async function startGateway(opts: {
     const { bind, port } = config.gateway;
 
     if (isPortInUse(port, bind)) {
-      console.error(`Error: port ${bind}:${port} is already in use.`);
-      console.error(`Run: m3 gateway stop`);
+      console.error(`${c.err(c.bold("✗ Port in use"))}: ${bind}:${port}`);
+      console.error(`  ${c.muted("Another process is already bound to this address.")}`);
+      suggest(`Stop it with: ${c.brand("m3 gateway stop")}`);
+      suggest(`Or pick another port: ${c.brand(`m3 gateway --port ${port + 1}`)}`);
       process.exit(1);
     }
 
@@ -131,9 +137,9 @@ async function startGateway(opts: {
       }
 
       const { url } = await server.start();
-      console.log(`m3 gateway listening on ${url}`);
-      console.log(`Dashboard: http://${bind}:${port}/dashboard`);
-      console.log(`Health: http://${bind}:${port}/health`);
+      console.log(`${c.brand(c.bold("m3"))} ${c.ok("ready")} ${c.muted("—")} ${c.accent(url)}`);
+      console.log(`  ${c.muted("Dashboard:")} ${c.accent(`http://${bind}:${port}/dashboard`)}`);
+      console.log(`  ${c.muted("Health:   ")} ${c.accent(`http://${bind}:${port}/health`)}`);
       if (opts.interactive && grantedWorkspace) {
         server.getPermissionBridge().grantWorkspace(grantedWorkspace);
         if (config.agent.permissionMode === "default") {
@@ -151,7 +157,17 @@ async function startGateway(opts: {
         return;
       }
     } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`${c.err(c.bold("✗ Startup failed"))}: ${msg}`);
+      if (msg.toLowerCase().includes("api key") || msg.toLowerCase().includes("secrets")) {
+        suggest(`Edit secrets: ${c.brand("$EDITOR ~/.m3/secrets.json")}`);
+        suggest(`Then re-run: ${c.brand("m3 doctor")}`);
+      } else if (msg.toLowerCase().includes("model")) {
+        suggest(`List models: ${c.brand("m3 models")}`);
+        suggest(`Switch model: ${c.brand("m3 model <ref>")}`);
+      } else {
+        suggest(`Check installation: ${c.brand("m3 doctor")}`);
+      }
       process.exit(1);
     }
 
@@ -260,24 +276,63 @@ program
     const config = loadConfig(opts.config);
     const secrets = loadSecrets();
 
-    console.log("m3 doctor\n");
-    console.log(`Config: ${path} (${configExists(opts.config) ? "found" : "defaults"})`);
-    console.log(`Secrets: ~/.m3/secrets.json (${secretsExists() ? "found" : "missing"})`);
-    console.log(`Gateway: ${config.gateway.bind}:${config.gateway.port}`);
-    console.log(`Gateway authToken: ${config.gateway.authToken ? "set" : "not set"}`);
-    console.log(`Gateway port: ${isPortInUse(config.gateway.port, config.gateway.bind) ? "IN USE" : "free"}`);
-    console.log(`Agent engine: ${config.agent.engine}`);
-    console.log(`Sandbox: ${config.agent.sandbox?.enabled !== false ? "enabled" : "disabled"}`);
-    console.log(`Default model ref: ${config.models.default}`);
-    console.log(`Active model ref: ${config.agent.model}`);
+    header("doctor", "environment & configuration check");
+    const issues: string[] = [];
+
+    status("info", "Config", `${path} ${configExists(opts.config) ? "(found)" : "(defaults)"}`);
+    status(
+      secretsExists() ? "ok" : "warn",
+      "Secrets",
+      secretsExists() ? "~/.m3/secrets.json" : "~/.m3/secrets.json missing",
+    );
+    if (!secretsExists()) {
+      issues.push("secrets.json missing");
+      suggest(`Run: ${c.brand("$EDITOR ~/.m3/secrets.json")}`);
+    }
+
+    status("info", "Gateway bind", `${config.gateway.bind}:${config.gateway.port}`);
+    if (config.gateway.bind !== "127.0.0.1" && config.gateway.bind !== "localhost" && !config.gateway.authToken) {
+      issues.push("gateway bound to non-loopback without authToken");
+      status("err", "Gateway authToken", "not set on a non-loopback bind");
+      suggest("Set gateway.authToken in m3.json before exposing the gateway.");
+    } else {
+      status(
+        config.gateway.authToken ? "ok" : "warn",
+        "Gateway authToken",
+        config.gateway.authToken ? "set" : "not set (loopback only)",
+      );
+    }
+    status(
+      isPortInUse(config.gateway.port, config.gateway.bind) ? "warn" : "ok",
+      "Gateway port",
+      isPortInUse(config.gateway.port, config.gateway.bind) ? "in use" : "free",
+    );
+    if (isPortInUse(config.gateway.port, config.gateway.bind)) {
+      suggest("Run: m3 gateway stop");
+    }
+
+    status("info", "Agent engine", config.agent.engine);
+    status(
+      config.agent.sandbox?.enabled !== false ? "ok" : "warn",
+      "Sandbox",
+      config.agent.sandbox?.enabled !== false ? "enabled" : "disabled",
+    );
+    status("info", "Default model", config.models.default);
+    status("info", "Active model", config.agent.model);
 
     try {
       const resolved = resolveModel(config, secrets, config.agent.model);
-      console.log(`Resolved provider: ${resolved.providerId} (${resolved.api})`);
-      console.log(`Resolved model: ${resolved.modelId}`);
-      console.log(`API key: ${resolved.apiKey ? `${resolved.apiKey.slice(0, 8)}...` : "missing"}`);
+      status("ok", "Model resolved", `${resolved.providerId} / ${resolved.modelId}`);
+      if (!resolved.apiKey) {
+        issues.push(`API key missing for provider ${resolved.providerId}`);
+        status("err", "API key", "missing");
+        suggest("Add the matching key to ~/.m3/secrets.json");
+      } else {
+        status("ok", "API key", `${resolved.apiKey.slice(0, 8)}…`);
+      }
     } catch (err) {
-      console.log(`Model resolution: FAILED — ${err instanceof Error ? err.message : String(err)}`);
+      issues.push(`Model resolution failed: ${err instanceof Error ? err.message : String(err)}`);
+      status("err", "Model resolved", err instanceof Error ? err.message : String(err));
     }
 
     const mcpPath = config.agent.mcp?.config;
@@ -285,19 +340,27 @@ program
       const resolved = expandHome(mcpPath);
       const fromFile = loadMcpConfig(mcpPath);
       const merged = mergeMcpServers(fromFile, config.agent.mcp?.servers);
-      console.log(
-        `MCP config: ${resolved} (${fs.existsSync(resolved) ? "found" : "missing"}) — ${Object.keys(merged).length} server(s)`,
+      const found = fs.existsSync(resolved);
+      status(
+        found ? "ok" : "warn",
+        "MCP config",
+        `${resolved} (${found ? "found" : "missing"}) — ${Object.keys(merged).length} server(s)`,
       );
+      if (!found) {
+        suggest("Check agent.mcp.config in m3.json, or remove the entry to disable MCP");
+      }
     } else {
-      console.log("MCP config: (not set)");
+      status("info", "MCP config", "(not set)");
     }
 
     const skillDirs = config.agent.skills?.dirs ?? [];
-    console.log(`Skill dirs: ${skillDirs.length ? skillDirs.join(", ") : "(none)"}`);
+    status("info", "Skill dirs", skillDirs.length ? skillDirs.join(", ") : "(none)");
 
     const plugins = await loadM3PluginsFromConfig(config);
-    console.log(
-      `Plugins: ${plugins.pluginIds.length ? plugins.pluginIds.join(", ") : "(none)"} | tools: ${plugins.toolNames.join(", ") || "-"} | cmds: ${plugins.commandNames.join(", ") || "-"}`,
+    status(
+      "info",
+      "Plugins",
+      `${plugins.pluginIds.length ? plugins.pluginIds.join(", ") : "(none)"} | tools: ${plugins.toolNames.join(", ") || "-"} | cmds: ${plugins.commandNames.join(", ") || "-"}`,
     );
 
     for (const [ch, label] of [
@@ -315,32 +378,55 @@ program
             : ch === "slack"
               ? Boolean(acc.botToken && acc.appToken)
               : true;
-        console.log(
-          `${label} [${accountId}]: ${on ? "enabled" : "disabled"}, ${ok ? "configured" : "incomplete"}, dmPolicy=${acc.dmPolicy}`,
+        status(
+          ok ? "ok" : "warn",
+          `${label} [${accountId}]`,
+          `${on ? "enabled" : "disabled"}, ${ok ? "configured" : "incomplete"}, dmPolicy=${acc.dmPolicy}`,
         );
+        if (!ok) suggest(`Finish configuring ${label} [${accountId}] in m3.json`);
       }
     }
 
-    console.log(`Permission mode: ${config.agent.permissionMode}`);
+    status("info", "Permission mode", config.agent.permissionMode);
     const chMode = config.agent.channelPermissionMode ?? "bypassPermissions";
-    console.log(`Channel permission mode: ${chMode} (Feishu/Slack/WebChat inbound)`);
-    console.log(`Slash commands: ${listCommands().length}`);
+    status(
+      chMode === "bypassPermissions" ? "warn" : "info",
+      "Channel permission mode",
+      chMode,
+    );
+    if (chMode === "bypassPermissions") {
+      suggest(
+        "Channel-originated runs (Feishu/Slack/WebChat) skip permission prompts. Set agent.channelPermissionMode to 'default' to require approval.",
+      );
+    }
+    status("info", "Slash commands", String(listCommands().length));
 
     try {
       const local = await getLocalStatus();
       if (local.state) {
-        console.log(`\nLocal model: ${local.modelReady ? "weights ready" : "weights incomplete"}, server ${local.healthOk ? "running" : "stopped"}`);
+        status(
+          local.modelReady && local.healthOk ? "ok" : "warn",
+          "Local model",
+          `${local.modelReady ? "weights ready" : "weights incomplete"}, server ${local.healthOk ? "running" : "stopped"}`,
+        );
         if (local.state && !local.healthOk && config.agent.model.startsWith("local/")) {
-          console.log("  Run: m3 local start");
+          suggest("Run: m3 local start");
         }
       } else if (config.agent.model.startsWith("local/") || config.models.default.startsWith("local/")) {
-        console.log("\nLocal model: not set up — run: m3 local");
+        status("warn", "Local model", "not set up");
+        suggest("Run: m3 local");
       }
     } catch {
       /* ignore */
     }
 
-    console.log("\nDoctor: OK — see docs/CHANNELS.md for channel setup");
+    console.log();
+    if (issues.length === 0) {
+      status("ok", "Doctor", "all checks passed — see docs/CHANNELS.md for channel setup");
+    } else {
+      status("warn", "Doctor", `${issues.length} issue(s) need attention`);
+      for (const i of issues) suggest(i);
+    }
   });
 
 program
@@ -412,6 +498,9 @@ channels
 
 registerLocalCommand(program);
 registerModelCommands(program);
+registerConfigCommand(program);
+registerInitCommand(program);
+registerWorkspaceCommand(program);
 
 channels
   .command("scan")
@@ -467,7 +556,7 @@ completionCmd.addHelpText(
 
 program
   .command("install")
-  .description("Run install.sh (macOS, adds m3 to ~/.local/bin)")
+  .description("Run ./install.sh (build, ~/.local/bin/m3, ~/.m3 config)")
   .action(() => {
     const root = findRepoRoot();
     const script = path.join(root, "install.sh");
@@ -520,13 +609,13 @@ program
       prompt: "you> ",
       repromptAfterSubmit: false,
       showMenuOnStart: Boolean(opts.plain),
-      onLine: async (line) => {
+      onLine: async (line, media) => {
         const runtime = {
           config,
           log: () => {},
           onInbound: (msg: import("@m3/channels").InboundMessage) => server.dispatchInbound(msg),
         };
-        await simulateWebChatInbound(runtime, peer, line.trim());
+        await simulateWebChatInbound(runtime, peer, line.trim(), media);
       },
     });
 

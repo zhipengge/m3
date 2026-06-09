@@ -1,6 +1,7 @@
 import http from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import { createAgentEngine } from "@m3/agent";
+import { verifyGatewayToken } from "./auth.js";
 import {
   createMessagePipeline,
   createPermissionHandler,
@@ -108,6 +109,7 @@ export class GatewayServer {
         const handled = handleControlHttp(req, res, {
           startedAt: this.startedAt,
           version: GATEWAY_PROTOCOL_VERSION,
+          authToken: this.options.config.gateway.authToken,
           getChannels: () => this.getChannelSnapshots(),
           getSessions: () => this.listSessions(),
           getSystem: () => collectSystemInfo(this.startedAt),
@@ -164,6 +166,17 @@ export class GatewayServer {
 
   async stop(): Promise<void> {
     clearGatewayPid();
+
+    // Flush any debounced session-mapper writes before we tear the
+    // rest of the gateway down. The debounce coalesces a 5–20
+    // writes/min hot stream into a single fsync per 500ms; without
+    // a final flush a SIGTERM mid-burst could lose the last few
+    // session id updates.
+    try {
+      this.sessionMapper.flush();
+    } catch {
+      // best-effort; persist() already swallows per-write errors
+    }
 
     await withShutdownTimeout(
       this.channelManager?.stopAll() ?? Promise.resolve(),
@@ -320,17 +333,5 @@ export async function createGatewayServer(options: GatewayServerOptions): Promis
   return new GatewayServer(options);
 }
 
-/** Validate the gateway bearer token from the Authorization header or ?token= query. */
-export function verifyGatewayToken(req: http.IncomingMessage, expected: string): boolean {
-  const header = req.headers["authorization"];
-  if (typeof header === "string" && header.startsWith("Bearer ")) {
-    if (header.slice(7) === expected) return true;
-  }
-  try {
-    const url = new URL(req.url ?? "", "http://localhost");
-    if (url.searchParams.get("token") === expected) return true;
-  } catch {
-    // malformed URL
-  }
-  return false;
-}
+/** Re-exported for backwards compatibility. The implementation lives in auth.ts. */
+export { verifyGatewayToken, writeUnauthorized } from "./auth.js";

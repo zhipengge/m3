@@ -66,6 +66,34 @@ export const AgentConfigSchema = z.object({
       bashEnvAllow: z.array(z.string()).default([]),
     })
     .default({}),
+  /**
+   * Per-session USD cost cap. When cumulative session cost crosses
+   * 90% of this number, the REPL toasts a warning and proposes an
+   * auto-/compact. At 100% the REPL pauses and asks the user to
+   * type /cost continue before allowing any more turns. `0` or
+   * undefined means no cap.
+   */
+  costCapUsd: z.number().nonnegative().optional(),
+  /**
+   * B10: per-tool allow/deny pattern lists. The pattern grammar
+   * is one of:
+   *
+   *   "Read"              — exact name match
+   *   "Read(/path/*)"     — name match + input substring match
+   *   "Bash(/regex/flags)" — name match + input regex match
+   *
+   * Evaluated before the permission manager's normal ask flow:
+   * deny rules win (short-circuit to "deny"), then allow rules
+   * (short-circuit to "allow"), otherwise the normal mode applies.
+   * A user with `permissions.allow: ["Read"]` and mode "default"
+   * will only ever be asked about non-Read tools.
+   */
+  permissions: z
+    .object({
+      allow: z.array(z.string()).default([]),
+      deny: z.array(z.string()).default([]),
+    })
+    .optional(),
 });
 
 export const ChannelAccountSchema = z.record(
@@ -91,6 +119,24 @@ export const ChannelAccountSchema = z.record(
     connectionMode: z.enum(["long", "webhook"]).default("long"),
     dmPolicy: z.enum(["pairing", "open", "closed"]).default("pairing"),
     allowFrom: z.array(z.string()).default([]),
+    /**
+     * C1: account-scoped provider override. When set, inbound messages
+     * from this (channel, accountId) pair use the specified model ref
+     * (e.g. "local/qwen3-vl-4b-instruct") instead of the global
+     * `agent.model`. The typical use is pinning a customer-support
+     * Feishu account to a local model so customer data never leaves
+     * the box — paired with `localOnly: true` enforcement in the
+     * pipeline, the agent has no path to a cloud LLM for this
+     * account.
+     */
+    provider: z.string().optional(),
+    /**
+     * C1: when true, the pipeline refuses to instantiate any non-local
+     * provider for this account, even if a `provider` override
+     * happens to name one. Defense in depth: a typo or accidental
+     * override cannot exfiltrate data.
+     */
+    localOnly: z.boolean().default(false),
   }),
 );
 

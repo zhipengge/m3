@@ -4,6 +4,8 @@ import { loadSkills } from "../skills/loader.js";
 import { buildSkillTool, buildSkillsSystemPrompt } from "../skills/skill-tool.js";
 import { mcpToolProvider } from "../mcp/provider.js";
 import { getTools as getBuiltinTools } from "./registry.js";
+import { MemoryStore } from "../session/memory-store.js";
+import { buildMemoryTool } from "./memory-tool.js";
 
 /**
  * A ToolProvider contributes tools (and optionally system-prompt text) to the
@@ -46,6 +48,37 @@ const skillsProvider: ToolProvider = {
   },
 };
 
+/**
+ * C3 part 2: a memory tool + memory system-prompt fragment. The
+ * store is keyed by the workspace id (D3) — a SHA-derived
+ * stable id from the absolute cwd. Two unrelated projects both
+ * named "src" no longer share a memory file. Legacy basename
+ * files are migrated lazily on first access.
+ */
+const memoryProvider: ToolProvider = {
+  id: "memory",
+  provide: async () => {
+    const { resolveWorkspace } = await import("@m3/config");
+    const store = new MemoryStore();
+    const ws = resolveWorkspace();
+    // Migrate a legacy basename file to the ws-id path on
+    // first access. Idempotent; no-op when already migrated.
+    try {
+      store.migrateBasenameToWorkspaceId(ws.absPath, ws.id);
+    } catch {
+      /* best-effort */
+    }
+    const notes = store.readAll(ws.id);
+    const systemPrompt = notes
+      ? `\n## Cross-session memory (workspace: ${ws.label} / ${ws.id})\n\n${notes}\n`
+      : "";
+    return {
+      tools: [buildMemoryTool(store, ws.id)],
+      systemPrompt,
+    };
+  },
+};
+
 const externalProviders: ToolProvider[] = [mcpToolProvider];
 
 /** Register an extra tool source (used by MCP bridge / plugins). */
@@ -67,12 +100,40 @@ function dedupeByName(tools: ToolDefinition[]): ToolDefinition[] {
 }
 
 /**
+ * Enforce `config.tools` (the user-facing allowlist). When set to "*" or
+ * unset, returns the input unchanged. When set to a string array, keeps
+ * only tools whose name is in the list. Pattern matching (`Bash(npm:*)`)
+ * is intentionally NOT supported here — use the dedicated
+ * `agent.permissions.allow` rules for that.
+ *
+ * This is the security boundary that the `agent.tools` config field
+ * promises but the harness had never enforced: previously, setting
+ * `agent.tools: ["Read"]` had zero effect on the LLM, which could call
+ * Bash / Edit / etc. via the registered provider path.
+ */
+export function applyToolAllowlist(
+  tools: ToolDefinition[],
+  allowlist: AgentConfig["tools"],
+): ToolDefinition[] {
+  if (allowlist === "*" || allowlist === undefined) return tools;
+  const set = new Set(allowlist);
+  const kept = tools.filter((t) => set.has(t.name));
+  const dropped = tools.filter((t) => !set.has(t.name));
+  if (dropped.length > 0) {
+    process.stderr.write(
+      `[m3:agent] agent.tools allowlist: hiding ${dropped.length} tool(s): ${dropped.map((t) => t.name).join(", ")}\n`,
+    );
+  }
+  return kept;
+}
+
+/**
  * Aggregate tools from all providers. Builtin and skills first, then any
  * registered external providers (MCP/plugins). Names are de-duplicated with
  * earlier providers winning so core tools can't be shadowed.
  */
 export async function collectTools(config: AgentConfig): Promise<CollectedTools> {
-  const providers = [builtinProvider, skillsProvider, ...externalProviders];
+  const providers = [builtinProvider, skillsProvider, memoryProvider, ...externalProviders];
   const tools: ToolDefinition[] = [];
   const prompts: string[] = [];
 
@@ -101,5 +162,10 @@ export async function collectTools(config: AgentConfig): Promise<CollectedTools>
   if (config.permissionMode === "plan") {
     collected = collected.filter((t) => t.isReadOnly);
   }
+  // Apply the user-declared `agent.tools` allowlist last so it overrides
+  // everything collected from providers. This is the only enforcement
+  // point — executeTools() relies on the LLM never having seen a name
+  // it cannot call, AND on a tool not being in the dispatch list.
+  collected = applyToolAllowlist(collected, config.tools);
   return { tools: collected, systemPrompt: prompts.join("\n\n") };
 }

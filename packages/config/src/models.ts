@@ -1,7 +1,12 @@
 import { z } from "zod";
 
 /** Provider API adapter — m3-owned, not Claude settings.json */
-export const ProviderApiSchema = z.enum(["openai-chat", "anthropic-messages"]);
+export const ProviderApiSchema = z.enum([
+  "openai-chat",
+  "anthropic-messages",
+  // C2: the cascade meta-provider (local-first, escalates to cloud).
+  "cascade",
+]);
 
 export const ModelEntrySchema = z.object({
   alias: z.string().optional(),
@@ -9,6 +14,10 @@ export const ModelEntrySchema = z.object({
   maxTokens: z.number().int().min(256).max(524_288).optional(),
   /** Total context window for trimming / local llama --ctx-size hint. */
   maxContextTokens: z.number().int().min(2048).max(1_048_576).optional(),
+  /** USD per 1M input tokens. Optional — omitted prices render as `—`. */
+  inputPricePerMTok: z.number().min(0).max(10_000).optional(),
+  /** USD per 1M output tokens. */
+  outputPricePerMTok: z.number().min(0).max(10_000).optional(),
 });
 
 export const ModelProviderSchema = z.object({
@@ -77,6 +86,8 @@ export type ResolvedModel = {
   maxTokens: number;
   maxContextTokens: number;
   alias?: string;
+  /** USD per 1M tokens. Missing → cost tracking shows `—`. */
+  pricing?: { input: number; output: number };
 };
 
 export function parseModelRef(ref: string): { providerId: string; modelId: string } {
