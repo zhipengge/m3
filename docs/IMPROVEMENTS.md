@@ -9,7 +9,7 @@
 | 安装体验 | `install.sh`、`m3 install`、zsh/bash 补全、`m3` 全局命令 |
 | 终端 | `m3 chat` / `gateway -i`，slash 命令扩展（`/config`、`/resume` 等） |
 | 飞书 | 收到 **OK** 表情、处理完成 **THUMBSUP**；需开放平台表情权限 |
-| 权限 | 通道默认 `channelPermissionMode: bypassPermissions` |
+| 权限 | 通道默认 `channelPermissionMode: default`（v0.2 起；旧默认 `bypassPermissions` 改为显式开启） |
 | 控制台 | `/dashboard`：CPU/内存、通道、会话、**配对列表**、**事件日志** |
 | 可靠性 | 管道错误回传用户；**同 session 串行锁**避免并发跑 Agent |
 | 配对 | `dmPolicy: pairing` 时持久化 `~/.m3/pairing.json`，`/pair CODE` 放行 |

@@ -1,8 +1,12 @@
-# Local offline models (GGUF + llama.cpp)
+# Local offline model (GGUF + llama.cpp)
 
-Run **GGUF** models fully offline with **llama.cpp** (`llama-server` OpenAI-compatible API). m3 routes agent traffic to `http://127.0.0.1:8080/v1` when the active model uses the `local/` provider.
+> One command — `m3 local` — turns any m3 install into a **provably air-gapped** agent. Same tools, same channels, same REPL; the inference just moves on-device.
 
-**Default model:** `qwen3-vl-4b-instruct` (Qwen3-VL-4B-Instruct). Use `--model` to pick another preset or any Hugging Face / ModelScope GGUF repo.
+m3 ships a built-in **OpenAI-compatible** local stack: `llama-server` from llama.cpp, fronting a GGUF model, fronted by the same `LLM Router` that talks to DeepSeek / Anthropic / MiniMax. Switching from cloud to local is a config flip, not a code change.
+
+**Default model:** `qwen3-vl-4b-instruct` (Qwen3-VL-4B-Instruct, vision-capable). Use `--model` to pick another preset or any Hugging Face / ModelScope GGUF repo.
+
+**Why this matters** — most agent frameworks pick a side: cloud-only (CC, Cursor) or local-only (LM Studio, Ollama wrappers). m3 lets you keep one workflow, one set of skills/MCP/plugins, and pick the inference engine per account (`localOnly: true` on a provider hard-blocks any cloud fallback for that account, defense-in-depth against typos).
 
 ## Quick setup
 

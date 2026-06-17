@@ -1,6 +1,8 @@
-# MiniMax 模型
+# MiniMax · Reasoning models
 
-m3 通过 **OpenAI 兼容** Chat Completions API 调用 MiniMax（与 DeepSeek 相同适配器）。
+m3 通过 **OpenAI 兼容** Chat Completions API 调用 MiniMax（与 DeepSeek、本地 `llama-server` 同一条 router）。MiniMax-M3 等推理模型的 `reasoning_content` / `reasoning_details` 字段会被自动解析，在 Ink REPL 里渲染为 `∴ Thinking` 流式块。
+
+> 设计取舍：m3 不绑死任何一家厂商。`provider/model` 是一个字符串、`api: "openai-chat"` 是一段 30 行 JSON —— 新增 provider **不用动源码**。下面就是 MiniMax 的最小配置样例。
 
 ## 配置
 
