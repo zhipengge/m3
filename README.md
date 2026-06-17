@@ -115,7 +115,7 @@ After you allow, **Write / Edit** and built-in file tools run under that folder 
 |------------------------|----------|
 | `default` | Workspace grant at startup; **Bash** may prompt separately in the REPL |
 | `acceptEdits` | Auto-approve file edits; Bash still restricted |
-| `bypassPermissions` | No prompts (channels default via `channelPermissionMode`) |
+| `bypassPermissions` | No prompts. **Not** the channel default — set `agent.channelPermissionMode: "bypassPermissions"` only after auditing risk. |
 
 ### Terminal UI (Ink)
 
@@ -389,7 +389,7 @@ Templates: [`examples/m3.json`](examples/m3.json) · [`examples/secrets.json.exa
     "engine": "native",
     "model": "minimax/MiniMax-M3",
     "thinkingDisplay": "expanded",
-    "channelPermissionMode": "bypassPermissions",
+    "channelPermissionMode": "default",
     "sandbox": { "enabled": true }
   }
 }

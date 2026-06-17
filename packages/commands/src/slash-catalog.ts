@@ -43,7 +43,10 @@ export const SLASH_COMMAND_SPECS: SlashCommandSpec[] = [
   { name: "goal", summary: "Set or clear a session goal", usage: "/goal <condition|clear>", category: "Flow" },
   { name: "resume", summary: "Continue prior context", usage: "/resume", category: "Flow" },
   { name: "export", summary: "Transcript export path", usage: "/export", category: "Flow" },
-  { name: "cost", summary: "Cost / billing hint", usage: "/cost", category: "Flow" },
+  { name: "cost", summary: "Token / USD spend (cap via agent.costCapUsd)", usage: "/cost [continue]", category: "Flow" },
+  { name: "retry", summary: "Resend the last user message", usage: "/retry", category: "Flow" },
+  { name: "quit", summary: "Exit the REPL (alias: /exit)", usage: "/quit", category: "Core" },
+  { name: "exit", summary: "Exit the REPL (alias: /quit)", usage: "/exit", category: "Core" },
 ];
 
 /** Display order for grouped palette / help output. */

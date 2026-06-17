@@ -86,8 +86,8 @@ describe("checkBashSafety", () => {
       "rm -rf node_modules",
       "rm -rf build dist",
       "git status",
+      "git push origin main",
       "pnpm test",
-      "node -e 'console.log(1)'",
       "echo $PATH",
       "cat package.json",
       "find . -name '*.ts' | xargs wc -l",
@@ -96,9 +96,45 @@ describe("checkBashSafety", () => {
     }
   });
 
+  it("flags `sh -c` / `zsh -c` multi-statement (bash-c rule's friends)", () => {
+    expect(checkBashSafety(`sh -c "rm x; echo y"`).safe).toBe(false);
+    expect(checkBashSafety(`zsh -c "true; false"`).safe).toBe(false);
+    expect(checkBashSafety(`sh -c "echo ok"`).safe).toBe(true);
+  });
+
+  it("flags interpreter -c / -e (python, node, perl) — agent must justify eval", () => {
+    expect(checkBashSafety("python3 -c 'import os; os.listdir(\"/\")'").safe).toBe(false);
+    expect(checkBashSafety("node -e 'console.log(1)'").safe).toBe(false);
+    expect(checkBashSafety("perl -e 'print 1'").safe).toBe(false);
+  });
+
+  it("flags sudo (any subcommand)", () => {
+    expect(checkBashSafety("sudo apt-get update").safe).toBe(false);
+    expect(checkBashSafety("sudo -n true").safe).toBe(false);
+  });
+
+  it("flags ssh user@host (remote shell)", () => {
+    expect(checkBashSafety("ssh root@example.com 'whoami'").safe).toBe(false);
+    expect(checkBashSafety("ssh-keygen -t ed25519").safe).toBe(true);
+  });
+
+  it("flags netcat listen / socat LISTEN (backdoor pattern)", () => {
+    expect(checkBashSafety("nc -l 4444").safe).toBe(false);
+    expect(checkBashSafety("ncat --listen 1337").safe).toBe(false);
+    expect(checkBashSafety("socat TCP-LISTEN:9000,fork EXEC:/bin/sh").safe).toBe(false);
+  });
+
+  it("flags git force-push", () => {
+    expect(checkBashSafety("git push origin main --force").safe).toBe(false);
+    expect(checkBashSafety("git push -f origin main").safe).toBe(false);
+    expect(checkBashSafety("git push --force-with-lease origin main").safe).toBe(false);
+  });
+
   it("exports the rule id list", () => {
     expect(BASH_SAFETY_RULE_IDS).toContain("rm-rf-root");
     expect(BASH_SAFETY_RULE_IDS).toContain("forkbomb");
-    expect(BASH_SAFETY_RULE_IDS.length).toBeGreaterThan(5);
+    expect(BASH_SAFETY_RULE_IDS).toContain("interpreter-eval");
+    expect(BASH_SAFETY_RULE_IDS).toContain("sudo");
+    expect(BASH_SAFETY_RULE_IDS.length).toBeGreaterThan(15);
   });
 });

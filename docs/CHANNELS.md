@@ -80,27 +80,31 @@ node packages/cli/dist/cli.js gateway
 
 ## 大量出现 `Permission denied`？
 
-飞书/Slack 等通道**没有终端**，不要用 `agent.permissionMode: "default"` 管通道。
+飞书/Slack 等通道**没有终端**，无法响应运行时审批弹窗。从 v0.2+ 起，通道默认 `channelPermissionMode: "default"`，会拦截 Bash / 工作区外写入等高危工具，避免远程用户随意触发命令。
 
-**推荐**（v0.2+ 默认）：通道消息自动使用 `channelPermissionMode`（未配置时等同 `bypassPermissions`），放行 Read/Write/MCP/Bash。
+调优思路（择一或组合）：
 
-在 `~/.m3/m3.json` 中确认：
+1. **白名单常用工具**（推荐）：在 `agent.permissions.allow` 列出明确允许的工具，如 `["Read", "Grep", "Glob", "Edit", "Write"]`，让通道用户能正常读写而 Bash 仍需手动审批：
+   ```json
+   "agent": {
+     "permissions": { "allow": ["Read", "Grep", "Glob", "Edit", "Write"] }
+   }
+   ```
+2. **acceptEdits**：信任的通道可设 `"channelPermissionMode": "acceptEdits"`，文件改动自动放行、Bash 仍受限。
+3. **完全放行**（仅限可信账号 + `allowFrom` 白名单 + 一次性脚本场景）：
+   ```json
+   "agent": { "channelPermissionMode": "bypassPermissions" }
+   ```
+   ⚠️ 一旦开启，凡能给 Bot 发消息的人都可在工作区跑任意 Bash。务必同时收紧 `dmPolicy: "pairing"` 与 `allowFrom`。
 
-```json
-"agent": {
-  "permissionMode": "default",
-  "channelPermissionMode": "bypassPermissions"
-}
-```
-
-然后**重新构建并重启**（旧进程不会加载新逻辑）：
+修改后**重新构建并重启**（旧进程不会加载新逻辑）：
 
 ```bash
 pnpm build
-pnpm m3 gateway
+m3 gateway
 ```
 
-若仍出现拒绝：看终端里 `[m3:audit] permission denied tool=...` 是哪类工具；不要用 `pnpm m3 gateway` 的旧全局安装，请在仓库根目录执行。
+若仍出现拒绝：看终端里 `[m3:audit] permission denied tool=...` 是哪类工具；按需追加到 `permissions.allow`。
 
 本地 CLI 仍可用 `permissionMode: "default"`；仅飞书/Slack/WebChat 走 `channelPermissionMode`。
 

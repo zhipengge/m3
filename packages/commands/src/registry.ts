@@ -1,5 +1,6 @@
 import type { M3Config } from "@m3/config";
 import { GoalStore } from "./goal-store.js";
+import { formatSlashCommandMenu } from "./slash-catalog.js";
 
 export type ParsedSlashCommand = {
   name: string;
@@ -29,6 +30,8 @@ export type CommandResult =
   | { action: "set_model"; model: string }
   | { action: "set_permission_mode"; mode: "default" | "acceptEdits" | "plan" | "bypassPermissions" }
   | { action: "list_mcp_servers" }
+  | { action: "exit_session" }
+  | { action: "retry_last" }
   | {
       action: "memory";
       subcommand: "read" | "append" | "search";
@@ -82,23 +85,13 @@ const BUILTIN_COMMANDS: Record<string, CommandHandler> = {
             : "Thinking display toggled (Ink REPL: Ctrl+O)",
     };
   },
-  help: () => ({
+  help: (args) => ({
+    // Render the rich, category-grouped menu from slash-catalog so
+    // /help stays in sync with tab-completion & the palette. The
+    // catalog also includes plugin-registered names (passed in by
+    // the bridge when it overrides /help).
     action: "reply_only",
-    text: [
-      "m3 slash commands (Claude Code–style):",
-      "/help — this message",
-      "/thinking [toggle|expand|collapse] — show/hide reasoning (Ctrl+O in Ink REPL)",
-      "/status — session + model",
-      "/context — context window usage",
-      "/clear — clear session (aliases: /reset, /new)",
-      "/compact [focus] — compress conversation history",
-      "/goal [condition|clear] — set or clear a session goal",
-      "/plan — plan mode prompt",
-      "/model <ref> — show model ref",
-      "/permissions — permission mode",
-      "/doctor — run m3 doctor",
-      "/mcp · /skills · /agents · /hooks · /memory · /review · /config · /resume · /export · /init · /cost",
-    ].join("\n"),
+    text: formatSlashCommandMenu(args.trim()),
   }),
   status: (_args, ctx) => ({
     action: "reply_only",
@@ -196,7 +189,7 @@ const BUILTIN_COMMANDS: Record<string, CommandHandler> = {
     }
     return {
       action: "reply_only",
-      text: `Permission mode: ${ctx.config.agent.permissionMode}\nChannel inbound: ${ctx.config.agent.channelPermissionMode ?? "bypassPermissions"}\n\nUsage: /permissions [default|acceptEdits|plan|bypassPermissions]\nIn Ink REPL: type /permissions to open an interactive picker.`,
+      text: `Permission mode: ${ctx.config.agent.permissionMode}\nChannel inbound: ${ctx.config.agent.channelPermissionMode ?? "default"}\n\nUsage: /permissions [default|acceptEdits|plan|bypassPermissions]\nIn Ink REPL: type /permissions to open an interactive picker.`,
     };
   },
 };
@@ -239,7 +232,20 @@ const PHASE2_COMMANDS: Record<string, CommandHandler> = {
     prompt: "Review the recent code changes and provide feedback.",
   }),
   doctor: () => ({ action: "reply_only", text: "Run: m3 doctor" }),
-  cost: () => ({ action: "reply_only", text: "Cost tracking: configure model provider billing in m3.json." }),
+  cost: () => ({
+    // The Ink REPL intercepts /cost first to surface real
+    // token/USD numbers and to handle `/cost continue` after a cap
+    // pause. This text is the fallback for channel / plain REPL
+    // contexts where there's no in-process meter to read.
+    action: "reply_only",
+    text: [
+      "/cost shows current session token / USD totals when run from the Ink REPL.",
+      "Cap session spending with `agent.costCapUsd` in ~/.m3/m3.json; the REPL pauses at 100% and resumes with `/cost continue`.",
+    ].join("\n"),
+  }),
+  quit: () => ({ action: "exit_session" }),
+  exit: () => ({ action: "exit_session" }),
+  retry: () => ({ action: "retry_last" }),
   init: (_args, ctx) => ({
     action: "reply_only",
     text: `Workspace: ${ctx.config.agent.cwd ?? process.cwd()}\nRun m3 doctor to verify install.`,

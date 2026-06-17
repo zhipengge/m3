@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { agentConfigForChannel, resolveChannelPermissionMode } from "./channel-permissions.js";
 
 describe("channel permissions", () => {
-  it("defaults to bypassPermissions for channels", () => {
+  it("defaults to 'default' (gated) for channels — safer than bypassPermissions", () => {
     expect(resolveChannelPermissionMode({ permissionMode: "default" } as never)).toBe(
-      "bypassPermissions",
+      "default",
     );
   });
 
@@ -17,9 +17,18 @@ describe("channel permissions", () => {
     ).toBe("plan");
   });
 
+  it("operator can still opt in to bypassPermissions", () => {
+    expect(
+      resolveChannelPermissionMode({
+        permissionMode: "default",
+        channelPermissionMode: "bypassPermissions",
+      } as never),
+    ).toBe("bypassPermissions");
+  });
+
   it("agentConfigForChannel applies channel mode", () => {
     const out = agentConfigForChannel({ permissionMode: "default" } as never);
-    expect(out.permissionMode).toBe("bypassPermissions");
+    expect(out.permissionMode).toBe("default");
   });
 
   it("terminal REPL keeps agent.permissionMode", () => {

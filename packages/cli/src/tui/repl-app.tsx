@@ -210,6 +210,10 @@ export function ReplApp(props: ReplAppProps) {
   const draftRef = useRef<string>("");
   /** Current position in the history; -1 means "not in history". */
   const historyIdxRef = useRef<number>(-1);
+  /** Timestamp of the first Ctrl+C in a double-tap-to-exit window. */
+  const ctrlCArmedRef = useRef<number | null>(null);
+  /** Self-reference for /retry — see comment at the call site. */
+  const submitLineRef = useRef<((line: string) => void) | null>(null);
   /**
    * Reverse-i-search state (Ctrl+R). `null` means the search
    * overlay is closed. While non-null, the input field is hidden
@@ -604,6 +608,44 @@ export function ReplApp(props: ReplAppProps) {
         setPaletteIdx(0);
         return;
       }
+      // /quit, /exit — explicit shutdown that flushes history. The
+      // Ctrl+C double-tap is the keyboard equivalent; offering both
+      // matches what users of CC and most modern REPLs reach for.
+      if (/^\/(quit|exit)\b/i.test(normalized)) {
+        historyRef.current?.flush();
+        setInput("");
+        setPaletteIdx(0);
+        exit();
+        return;
+      }
+      // /retry — re-submit the most recent user message. Useful
+      // after a transient network/auth error or an interrupted
+      // stream. We look up the last user line from the completed
+      // chat history; if there isn't one, render a hint.
+      if (/^\/retry\b/i.test(normalized)) {
+        setInput("");
+        setPaletteIdx(0);
+        const lastUser = [...completed].reverse().find((m) => m.role === "user");
+        if (!lastUser) {
+          pushCompleted({
+            id: nextId(),
+            role: "system",
+            text: "/retry: no previous user message in this session.",
+          });
+          return;
+        }
+        pushCompleted({
+          id: nextId(),
+          role: "system",
+          text: `↻ retrying: ${lastUser.text.slice(0, 80)}${lastUser.text.length > 80 ? "…" : ""}`,
+        });
+        // Re-enter submit with the prior text. Calling
+        // submitLineRef.current avoids the chicken-and-egg of
+        // referencing the useCallback's own identifier from inside
+        // its initializer.
+        setTimeout(() => submitLineRef.current?.(lastUser.text), 0);
+        return;
+      }
       if (/^\/cost$/i.test(normalized)) {
         handleCostSlash();
         setInput("");
@@ -654,13 +696,34 @@ export function ReplApp(props: ReplAppProps) {
       // Snapshot the attachments so a Ctrl+V race during the await doesn't
       // mutate the array after we've already submitted it.
       const media = pendingAttachments.length > 0 ? pendingAttachments : undefined;
-      void Promise.resolve(onSubmitRef.current(normalized, media)).catch(() => {});
+      void Promise.resolve(onSubmitRef.current(normalized, media)).catch((err) => {
+        // Previously this catch was a silent `() => {}`. Pipeline /
+        // bridge failures would leave the user with a stuck spinner
+        // and no idea why. Surface the failure as a system row so
+        // the scrollback shows something happened.
+        const msg = err instanceof Error ? err.message : String(err);
+        setLoading(false);
+        setPendingProgress(null);
+        pushCompleted({
+          id: nextId(),
+          role: "error",
+          text: `✗ submit failed: ${msg}`,
+        });
+      });
+      // Persist history immediately so a crash / Ctrl+C between
+      // submit and the next `flush()` opportunity doesn't lose the
+      // command. push() is in-memory; flush() does the fs write.
+      historyRef.current?.flush();
       setInput("");
       setPaletteIdx(0);
       setPendingAttachments([]);
     },
-    [appendUserMessage, handleThinkingSlash, handleCostSlash, pendingAttachments],
+    // `completed` and `exit` are new deps for /retry and /quit; the
+    // others are preserved from the prior list.
+    [appendUserMessage, handleThinkingSlash, handleCostSlash, pendingAttachments, completed, exit],
   );
+  // Refresh the self-reference so /retry can find the latest closure.
+  submitLineRef.current = submitLine;
 
   /**
    * Ctrl+V: read the OS clipboard image, persist to ~/.m3/media/webchat/…,
@@ -974,11 +1037,50 @@ export function ReplApp(props: ReplAppProps) {
         return;
       }
       if (key.ctrl && (_char === "c" || _char === "d")) {
-        exit();
+        // Double-tap to exit. The first Ctrl+C surfaces a hint and
+        // clears any partial input; the second one (within 2s)
+        // really exits. Mirrors Claude Code & most modern REPLs and
+        // avoids "I lost my prompt because my finger slipped" pain.
+        // Ctrl+D still keeps single-press semantics — that's the
+        // canonical EOF gesture and users press it deliberately.
+        if (_char === "d") {
+          historyRef.current?.flush();
+          exit();
+          return;
+        }
+        if (ctrlCArmedRef.current && Date.now() - ctrlCArmedRef.current < 2000) {
+          historyRef.current?.flush();
+          exit();
+          return;
+        }
+        ctrlCArmedRef.current = Date.now();
+        if (input.length > 0) {
+          setInput("");
+          setPaletteIdx(0);
+        }
+        pushCompleted({
+          id: nextId(),
+          role: "system",
+          text: "Press Ctrl+C again within 2s to exit (or type /quit).",
+        });
+        return;
       }
     },
     { isActive: !paletteActive || Boolean(pendingPermission) },
   );
+
+  // Flush command history when the Ink app exits cleanly (Ctrl+D
+  // via exit(), parent shutdown, etc.). Without this, lines pushed
+  // since the last submit-time flush would be lost.
+  useEffect(() => {
+    const flush = () => historyRef.current?.flush();
+    process.once("beforeExit", flush);
+    process.once("exit", flush);
+    return () => {
+      process.removeListener("beforeExit", flush);
+      process.removeListener("exit", flush);
+    };
+  }, []);
 
   const hasActiveThinking = liveThinking?.streaming ?? false;
   const showSpinner = loading && !pendingPermission && !hasActiveThinking;
@@ -997,7 +1099,7 @@ export function ReplApp(props: ReplAppProps) {
           </Text>
           <Text dimColor>Multi-modality · Multi-task · Multi-agent</Text>
           <Text dimColor>
-            Type / for commands · Ctrl+O expand thinking · Enter send · Ctrl+C exit
+            Type / for commands · Ctrl+O expand thinking · Enter send · Ctrl+C×2 exit
           </Text>
           {props.workspace ? <Text dimColor>Workspace: {props.workspace}</Text> : null}
         </Box>

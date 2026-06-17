@@ -3,15 +3,18 @@ import { Command } from "commander";
 import { createAgentEngine } from "@m3/agent";
 import { registerWebChatClient, simulateWebChatInbound } from "@m3/channel-extensions";
 import {
+  ConfigParseError,
   configExists,
   expandHome,
   loadConfig,
   loadSecrets,
+  looksLikePlaceholderKey,
   resolveAgentWorkspace,
   resolveConfigPath,
   resolveModel,
   saveConfig,
   secretsExists,
+  SecretsParseError,
 } from "@m3/config";
 import {
   createGatewayServer,
@@ -73,13 +76,63 @@ async function startGateway(opts: {
   interactive?: boolean;
   plainRepl?: boolean;
 }): Promise<void> {
-    let config = loadConfig(opts.config);
+    // First-run guidance. A user who installed m3 and immediately
+    // typed `m3` without `m3 init` would have hit a generic
+    // "Missing API key" Zod error well into createGatewayServer.
+    // Short-circuit with a friendly pointer instead.
+    if (!opts.mock && !secretsExists() && !configExists(opts.config)) {
+      console.error(`${c.err(c.bold("✗ m3 is not configured yet"))}`);
+      console.error(`  ${c.muted("No ~/.m3/secrets.json or ~/.m3/m3.json found.")}`);
+      suggest(`Bootstrap config:   ${c.brand("m3 init")}`);
+      suggest(`Then add API keys:  ${c.brand("$EDITOR ~/.m3/secrets.json")}`);
+      suggest(`Verify:             ${c.brand("m3 doctor")}`);
+      process.exit(1);
+    }
+    let config: import("@m3/config").M3Config;
+    try {
+      config = loadConfig(opts.config);
+    } catch (err) {
+      if (err instanceof ConfigParseError) {
+        console.error(`${c.err(c.bold("✗ Invalid config"))}: ${err.path}`);
+        for (const issue of err.issues ?? []) {
+          console.error(`    ${c.muted(issue.path)}: ${issue.message}`);
+        }
+        suggest(`Edit: ${c.brand(`$EDITOR ${err.path}`)}`);
+        suggest(`Validate: ${c.brand("m3 config validate")}`);
+        process.exit(1);
+      }
+      throw err;
+    }
     if (opts.port) {
       config.gateway.port = Number(opts.port);
     }
     const launchCwd = process.cwd();
     if (!config.agent.cwd?.trim()) {
       config = { ...config, agent: { ...config.agent, cwd: launchCwd } };
+    }
+    // Pre-flight API-key check. Catches the "I copied examples/
+    // secrets.json.example verbatim" mistake before we boot the
+    // gateway, MCP servers, llama.cpp, etc. — the user is shown
+    // exactly which provider needs a real key.
+    if (!opts.mock) {
+      try {
+        const secretsForCheck = loadSecrets(undefined, { tolerant: true });
+        const resolved = resolveModel(config, secretsForCheck, config.agent.model);
+        if (looksLikePlaceholderKey(resolved.apiKey)) {
+          console.error(
+            `${c.err(c.bold("✗ Placeholder API key"))} for ${c.brand(resolved.providerId)}`,
+          );
+          console.error(
+            `  ${c.muted("Current value looks like the example from secrets.json.example.")}`,
+          );
+          suggest(`Edit: ${c.brand("$EDITOR ~/.m3/secrets.json")}`);
+          suggest(`Re-check: ${c.brand("m3 doctor")}`);
+          process.exit(1);
+        }
+      } catch {
+        // resolveModel may fail (e.g. missing provider) — let the
+        // normal startup error path surface a better message.
+      }
     }
     if (!opts.mock) {
       await prepareInferenceBackend(config);
@@ -159,12 +212,20 @@ async function startGateway(opts: {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`${c.err(c.bold("✗ Startup failed"))}: ${msg}`);
-      if (msg.toLowerCase().includes("api key") || msg.toLowerCase().includes("secrets")) {
+      const lower = msg.toLowerCase();
+      if (lower.includes("placeholder") || lower.includes("looks like a template")) {
+        suggest(`Replace example keys: ${c.brand("$EDITOR ~/.m3/secrets.json")}`);
+        suggest(`Confirm: ${c.brand("m3 doctor")}`);
+      } else if (lower.includes("api key") || lower.includes("secrets")) {
+        if (!secretsExists()) suggest(`Bootstrap: ${c.brand("m3 init")}`);
         suggest(`Edit secrets: ${c.brand("$EDITOR ~/.m3/secrets.json")}`);
         suggest(`Then re-run: ${c.brand("m3 doctor")}`);
-      } else if (msg.toLowerCase().includes("model")) {
+      } else if (lower.includes("model")) {
         suggest(`List models: ${c.brand("m3 models")}`);
         suggest(`Switch model: ${c.brand("m3 model <ref>")}`);
+      } else if (lower.includes("eaddrinuse") || lower.includes("port")) {
+        suggest(`Stop existing: ${c.brand("m3 gateway stop")}`);
+        suggest(`Or use another port: ${c.brand("m3 --port 18791")}`);
       } else {
         suggest(`Check installation: ${c.brand("m3 doctor")}`);
       }
@@ -272,22 +333,72 @@ program
   .description("Check m3 installation and configuration")
   .option("--config <path>", "Config file path")
   .action(async (opts: { config?: string }) => {
-    const path = resolveConfigPath(opts.config);
-    const config = loadConfig(opts.config);
-    const secrets = loadSecrets();
+    const configPath = resolveConfigPath(opts.config);
 
     header("doctor", "environment & configuration check");
     const issues: string[] = [];
 
-    status("info", "Config", `${path} ${configExists(opts.config) ? "(found)" : "(defaults)"}`);
+    // Node runtime. install.sh requires >=22.19; if the user invoked
+    // m3 with an older Node (via PATH shenanigans) we'd hit silent
+    // bugs in Ink/streaming. Surface it loudly.
+    const nodeVersion = process.versions.node;
+    const [major, minor] = nodeVersion.split(".").map((s) => Number(s));
+    const nodeOk = (major ?? 0) > 22 || ((major === 22) && ((minor ?? 0) >= 19));
+    status(
+      nodeOk ? "ok" : "err",
+      "Node.js",
+      `${process.version} (need ≥ 22.19)`,
+    );
+    if (!nodeOk) {
+      issues.push(`Node ${process.version} is below the supported 22.19`);
+      suggest("Upgrade Node: https://nodejs.org");
+    }
+
+    let config: import("@m3/config").M3Config;
+    try {
+      config = loadConfig(opts.config);
+    } catch (err) {
+      if (err instanceof ConfigParseError) {
+        status("err", "Config", `${configPath} (invalid)`);
+        for (const issue of err.issues ?? []) {
+          status("err", `  ${issue.path}`, issue.message);
+        }
+        issues.push("config invalid — cannot continue doctor");
+        suggest(`Edit: ${c.brand(`$EDITOR ${configPath}`)}`);
+        suggest(`Validate: ${c.brand("m3 config validate")}`);
+        process.exit(1);
+      }
+      throw err;
+    }
+
+    let secrets: import("@m3/config").M3Secrets;
+    const secretWarnings: string[] = [];
+    try {
+      secrets = loadSecrets(undefined, {
+        onWarning: (m) => secretWarnings.push(m),
+      });
+    } catch (err) {
+      if (err instanceof SecretsParseError) {
+        status("err", "Secrets", `${err.path} (invalid JSON or schema)`);
+        issues.push("secrets.json invalid");
+        suggest(`Edit: ${c.brand(`$EDITOR ${err.path}`)}`);
+        process.exit(1);
+      }
+      throw err;
+    }
+
+    status("info", "Config", `${configPath} ${configExists(opts.config) ? "(found)" : "(defaults)"}`);
     status(
       secretsExists() ? "ok" : "warn",
       "Secrets",
       secretsExists() ? "~/.m3/secrets.json" : "~/.m3/secrets.json missing",
     );
+    for (const w of secretWarnings) {
+      status("warn", "Secrets", w);
+    }
     if (!secretsExists()) {
-      issues.push("secrets.json missing");
-      suggest(`Run: ${c.brand("$EDITOR ~/.m3/secrets.json")}`);
+      issues.push("secrets.json missing — run: m3 init");
+      suggest(`Bootstrap: ${c.brand("m3 init")}`);
     }
 
     status("info", "Gateway bind", `${config.gateway.bind}:${config.gateway.port}`);
@@ -326,13 +437,41 @@ program
       if (!resolved.apiKey) {
         issues.push(`API key missing for provider ${resolved.providerId}`);
         status("err", "API key", "missing");
-        suggest("Add the matching key to ~/.m3/secrets.json");
+        suggest(`Add a real key for ${resolved.providerId} to ~/.m3/secrets.json`);
+      } else if (looksLikePlaceholderKey(resolved.apiKey)) {
+        issues.push(`API key for ${resolved.providerId} looks like a placeholder`);
+        status(
+          "err",
+          "API key",
+          `${resolved.apiKey.slice(0, 12)}… looks like a template/placeholder`,
+        );
+        suggest(
+          `Replace the example key for ${resolved.providerId} in ~/.m3/secrets.json with a real one`,
+        );
       } else {
-        status("ok", "API key", `${resolved.apiKey.slice(0, 8)}…`);
+        status("ok", "API key", `${resolved.apiKey.slice(0, 8)}… (looks real)`);
       }
     } catch (err) {
       issues.push(`Model resolution failed: ${err instanceof Error ? err.message : String(err)}`);
       status("err", "Model resolved", err instanceof Error ? err.message : String(err));
+      suggest(`List models: ${c.brand("m3 models")}`);
+    }
+
+    // Surface ALL providers with placeholder keys, not just the
+    // active one — a user might have switched models but kept the
+    // example secret around for another provider.
+    const placeholderProviders: string[] = [];
+    for (const [provider, info] of Object.entries(secrets.providers ?? {})) {
+      if (looksLikePlaceholderKey(info?.apiKey)) {
+        placeholderProviders.push(provider);
+      }
+    }
+    if (placeholderProviders.length > 0) {
+      status(
+        "warn",
+        "Other placeholders",
+        placeholderProviders.join(", "),
+      );
     }
 
     const mcpPath = config.agent.mcp?.config;
@@ -388,15 +527,16 @@ program
     }
 
     status("info", "Permission mode", config.agent.permissionMode);
-    const chMode = config.agent.channelPermissionMode ?? "bypassPermissions";
+    const chMode = config.agent.channelPermissionMode ?? "default";
     status(
       chMode === "bypassPermissions" ? "warn" : "info",
       "Channel permission mode",
-      chMode,
+      `${chMode}${config.agent.channelPermissionMode ? "" : " (default)"}`,
     );
     if (chMode === "bypassPermissions") {
+      issues.push("channelPermissionMode=bypassPermissions exposes Bash/Write to channel users");
       suggest(
-        "Channel-originated runs (Feishu/Slack/WebChat) skip permission prompts. Set agent.channelPermissionMode to 'default' to require approval.",
+        "Channel-originated runs (Feishu/Slack/WebChat) skip permission prompts. Set agent.channelPermissionMode to 'default' (or remove it) to require approval.",
       );
     }
     status("info", "Slash commands", String(listCommands().length));
@@ -506,14 +646,22 @@ channels
   .command("scan")
   .description("QR setup for channels (Feishu; WeChat placeholder)")
   .option("--port <port>", "Setup server port", "18792")
+  .option(
+    "--lan",
+    "Bind 0.0.0.0 so a phone on the same Wi-Fi can scan the QR (anyone on the LAN can submit while open)",
+  )
   .option("--config <path>", "Config file path")
-  .action(async (opts: { port?: string; config?: string }) => {
+  .action(async (opts: { port?: string; config?: string; lan?: boolean }) => {
     const result = await runFeishuScanSetup({
       port: opts.port ? Number(opts.port) : 18792,
       configPath: opts.config,
+      host: opts.lan ? "0.0.0.0" : "127.0.0.1",
     });
     if (result.saved) {
-      console.log("\nConfig saved. Next: m3 chat");
+      console.log(`\n${c.ok("✓")} Config saved.`);
+      console.log(`  ${c.muted("Default policy:")} dmPolicy=pairing (DM /pair <code>)`);
+      suggest(`Start the gateway: ${c.brand("m3")}`);
+      suggest(`Verify health:      ${c.brand("m3 doctor")}`);
     } else {
       console.log("\nNo save detected (form may not have been submitted).");
     }

@@ -1,4 +1,5 @@
 import http from "node:http";
+import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { createAgentEngine } from "@m3/agent";
 import { verifyGatewayToken } from "./auth.js";
@@ -309,10 +310,35 @@ export class GatewayServer {
       ws.send(JSON.stringify(event));
     };
 
+    // Workspace pinning: the WS client may suggest a workspace, but
+    // we never blindly pass it to the engine — a local malicious
+    // process on a loopback gateway without an authToken could
+    // otherwise point the agent at `/etc` (or worse). The agent's
+    // configured workspace always wins; a suggestion is only honored
+    // when it resolves underneath it.
+    const allowedRoot = resolveAgentWorkspace(this.options.config.agent);
+    let effectiveCwd = allowedRoot;
+    if (params.workspace) {
+      try {
+        const requested = path.resolve(params.workspace);
+        const rel = path.relative(allowedRoot, requested);
+        if (!rel.startsWith("..") && !path.isAbsolute(rel)) {
+          effectiveCwd = requested;
+        } else {
+          this.eventLog.append(
+            "warn",
+            `ws agent run: rejected workspace override ${requested} (outside ${allowedRoot})`,
+          );
+        }
+      } catch {
+        /* fall through to allowedRoot */
+      }
+    }
+
     emit({ stream: "lifecycle", phase: "start" });
     for await (const evt of engine.run({
       prompt: params.message,
-      cwd: params.workspace,
+      cwd: effectiveCwd,
       permissionHandler: createPermissionHandler(this.permissionBridge),
     })) {
       if (evt.type === "reasoning_delta") {

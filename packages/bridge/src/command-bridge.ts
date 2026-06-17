@@ -57,6 +57,12 @@ export function applyCommandResult(
   if (result.action === "reply_only") {
     return result.text;
   }
+  if (result.action === "exit_session") {
+    return "Use Ctrl+C twice (or Ctrl+D) to exit the REPL. /quit and /exit are aliases for this hint.";
+  }
+  if (result.action === "retry_last") {
+    return "/retry resends the most recent user message — handled by the REPL (channels: re-send the same prompt).";
+  }
   if (result.action === "passthrough") {
     return originalBody;
   }

@@ -200,18 +200,19 @@ export async function runFeishuScanSetup(options?: {
           const config: M3Config = loadConfig(options?.configPath);
           const accountId = body.accountId?.trim() || "default";
           if (!config.channels.feishu) config.channels.feishu = {};
+          // Safe-by-default: dmPolicy "pairing" and an empty allowFrom
+          // means the bot only talks to peers that have explicitly
+          // sent `/pair <code>`. The previous default ("open" +
+          // `["*"]`) let any Feishu user trigger an agent run, which
+          // — combined with the old channelPermissionMode default of
+          // bypassPermissions — gave them Bash/Write on the host.
           config.channels.feishu[accountId] = {
             enabled: true,
             connectionMode: "long",
             appId: body.appId.trim(),
             appSecret: body.appSecret.trim(),
-            dmPolicy: "open",
-            allowFrom: ["*"],
-            // C1: when the user pins the account to a local model
-            // we also flip localOnly. The scan-setup form is the
-            // easiest place to do this pairing — a user opting
-            // into a local-provider override clearly wants the
-            // privacy guarantee that comes with it.
+            dmPolicy: "pairing",
+            allowFrom: [],
             localOnly: false,
           };
           // saveConfig now writes atomically at 0o600 (see
@@ -222,7 +223,11 @@ export async function runFeishuScanSetup(options?: {
           res.end(
             JSON.stringify({
               ok: true,
-              message: `Saved to ${resolveConfigPath(options?.configPath)}. Run: m3 gateway`,
+              message: [
+                `Saved to ${resolveConfigPath(options?.configPath)}.`,
+                "dmPolicy: pairing — DM the bot, then send /pair <code> from your account.",
+                "Next: run `m3` on this machine.",
+              ].join(" "),
             }),
           );
         } catch (err) {
@@ -248,10 +253,18 @@ export async function runFeishuScanSetup(options?: {
   });
 
   console.log("\nm3 channel scan setup (Feishu / WeChat)\n");
-  console.log("Scan QR with your phone (same Wi‑Fi):\n");
-  qrcode.generate(setupUrl, { small: true });
-  console.log(`\nOr open: ${setupUrl}`);
-  console.log(`\nConfig file: ${resolveConfigPath(options?.configPath)}`);
+  if (host === "127.0.0.1") {
+    console.log("Open this URL in your local browser:");
+    console.log(`  ${setupUrl}\n`);
+    console.log("Tip: re-run with `--lan` to bind 0.0.0.0 and scan from your phone");
+    console.log("     (any device on the LAN can submit, so finish quickly).\n");
+  } else {
+    console.log("Scan QR with your phone (same Wi-Fi):\n");
+    qrcode.generate(setupUrl, { small: true });
+    console.log(`\nOr open: ${setupUrl}`);
+    console.log("⚠ Anyone on this LAN can reach the setup form until you Ctrl+C.\n");
+  }
+  console.log(`Config file: ${resolveConfigPath(options?.configPath)}`);
   console.log("Submit the form, then press Ctrl+C to exit.\n");
 
   const timeoutMs = options?.timeoutMs ?? 300_000;

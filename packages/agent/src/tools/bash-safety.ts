@@ -89,6 +89,55 @@ const RULES: CompiledRule[] = [
     reason: "`bash -c` with multiple statements / pipes in the quoted arg",
   },
   {
+    // Catches `sh -c`, `dash -c`, `zsh -c`, `ksh -c`, `ash -c` —
+    // the same multi-statement pattern restricted above, but for
+    // shells that the previous rule didn't cover. Allows
+    // single-statement forms.
+    id: "altshell-c-multicommand",
+    re: /\b(sh|dash|zsh|ksh|ash)\s+-c\s+["'`][^"'`]*[;|][^"'`]*["'`]/,
+    reason: "alternate-shell `-c` with multiple statements / pipes",
+  },
+  {
+    // `python -c`, `python3 -c`, `node -e`, `perl -e`, `ruby -e`,
+    // `php -r` — interpreter eval flags are a one-character bridge
+    // to arbitrary code execution that bypasses every shell rule
+    // above. Flagging them forces an approval; harmless one-liners
+    // still get a single yes/no.
+    id: "interpreter-eval",
+    re: /\b(python\d?|node|perl|ruby|php)\s+(-c|-e|-r)\s+\S/,
+    reason: "Interpreter eval flag (python/node/perl/ruby/php) — arbitrary code",
+  },
+  {
+    // `sudo` of any command. Even `sudo -n true` belongs in an
+    // approval flow on a developer machine.
+    id: "sudo",
+    re: /(^|\s)sudo(\s+|$)/,
+    reason: "`sudo` escalates privileges",
+  },
+  {
+    // `ssh user@host …` — agent shouldn't open remote shells without
+    // explicit operator intent. Doesn't block `ssh-add`, `ssh-keygen`.
+    id: "ssh-remote",
+    re: /\bssh\s+[^\s]+@[^\s]+/,
+    reason: "Opening a remote SSH shell",
+  },
+  {
+    // `nc -l`, `ncat -l`, `socat …LISTEN…` — listening shells are a
+    // common backdoor pattern.
+    id: "netcat-listen",
+    re: /\b(nc|ncat)\s+(-l\b|--listen\b)|\bsocat\s+.*LISTEN/i,
+    reason: "Opening a listening shell (potential backdoor)",
+  },
+  {
+    // `git push --force` to anything other than a private branch.
+    // Catches the common foot-gun where an agent rewrites shared
+    // history. The pattern is narrow on purpose — we don't block
+    // every `git push`.
+    id: "git-force-push",
+    re: /\bgit\s+push\s+(.*\s)?(-f\b|--force(?:-with-lease)?\b)/,
+    reason: "Force-push rewrites shared history",
+  },
+  {
     id: "shutdown",
     re: /\b(shutdown|reboot|halt|poweroff)\b/,
     reason: "System power control command",

@@ -78,7 +78,7 @@ export function registerConfigCommand(program: Command): void {
       status("info", "Auth token", config.gateway.authToken ? "set" : "not set");
       status("info", "Engine", config.agent.engine);
       status("info", "Permission mode", config.agent.permissionMode);
-      status("info", "Channel perm mode", config.agent.channelPermissionMode ?? "bypassPermissions");
+      status("info", "Channel perm mode", config.agent.channelPermissionMode ?? "default");
       status("info", "Sandbox", config.agent.sandbox?.enabled !== false ? "enabled" : "disabled");
       status("info", "Default model", config.models.default);
       status("info", "Active model", config.agent.model);

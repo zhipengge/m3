@@ -41,7 +41,7 @@
     "engine": "native",
     "model": "deepseek/deepseek-chat",
     "permissionMode": "default",
-    "channelPermissionMode": "bypassPermissions",
+    "channelPermissionMode": "default",
     "tools": "*",
     "maxTurns": 25,
     "mcp": {

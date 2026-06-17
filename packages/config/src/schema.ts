@@ -24,7 +24,14 @@ export const AgentConfigSchema = z.object({
   permissionMode: z
     .enum(["default", "acceptEdits", "bypassPermissions", "plan"])
     .default("default"),
-  /** Feishu/Slack/WebChat inbound runs use this (default: bypassPermissions). */
+  /**
+   * Feishu/Slack/WebChat inbound runs use this (default: `default` — the
+   * pipeline-level permission manager still gates Bash and other risky
+   * tools instead of auto-approving everything). The previous default
+   * was `bypassPermissions`, which let any remote user trigger Bash /
+   * Write without prompts. Operators who want the old behavior set
+   * this explicitly.
+   */
   channelPermissionMode: z
     .enum(["default", "acceptEdits", "bypassPermissions", "plan"])
     .optional(),
@@ -200,7 +207,17 @@ export type Binding = z.infer<typeof BindingSchema>;
 export type M3Config = z.infer<typeof M3ConfigSchema>;
 
 export { ModelsConfigSchema, type ModelsConfig, type ResolvedModel } from "./models.js";
-export { M3SecretsSchema, type M3Secrets, loadSecrets, saveSecrets, secretsExists, DEFAULT_SECRETS_PATH } from "./secrets.js";
+export {
+  M3SecretsSchema,
+  type M3Secrets,
+  loadSecrets,
+  saveSecrets,
+  secretsExists,
+  DEFAULT_SECRETS_PATH,
+  SecretsParseError,
+  type LoadSecretsOptions,
+  looksLikePlaceholderKey,
+} from "./secrets.js";
 export { resolveModel } from "./resolve-model.js";
 
 export const DEFAULT_CONFIG_PATH = "~/.m3/m3.json";

@@ -18,16 +18,67 @@ export const M3SecretsSchema = z.object({
 
 export type M3Secrets = z.infer<typeof M3SecretsSchema>;
 
-export function loadSecrets(secretsPath?: string): M3Secrets {
+export class SecretsParseError extends Error {
+  readonly path: string;
+  readonly cause: unknown;
+  constructor(path: string, cause: unknown) {
+    super(
+      `Failed to parse ${path}: ${cause instanceof Error ? cause.message : String(cause)}. ` +
+        `Fix the JSON or delete the file to start fresh (existing keys will be lost).`,
+    );
+    this.name = "SecretsParseError";
+    this.path = path;
+    this.cause = cause;
+  }
+}
+
+export type LoadSecretsOptions = {
+  /**
+   * When false (default), parse errors throw `SecretsParseError` so the
+   * caller can show a friendly error instead of silently dropping the
+   * user's keys. Set true for read-only consumers that genuinely want
+   * empty defaults on corruption.
+   */
+  tolerant?: boolean;
+  /** Called for non-fatal warnings (permission too loose, etc.). */
+  onWarning?: (msg: string) => void;
+};
+
+export function loadSecrets(
+  secretsPath?: string,
+  options: LoadSecretsOptions = {},
+): M3Secrets {
   const resolved = expandHome(secretsPath ?? DEFAULT_SECRETS_PATH);
   if (!fs.existsSync(resolved)) {
     return M3SecretsSchema.parse({});
   }
   try {
-    const raw = JSON.parse(fs.readFileSync(resolved, "utf8")) as unknown;
-    return M3SecretsSchema.parse(raw);
+    const st = fs.statSync(resolved);
+    // 0o077 = group + others bits. On a multi-user host a 0644
+    // secrets.json leaks API keys to every account. We warn but
+    // don't refuse — refusing would brick installs whose install
+    // script ran with a different umask.
+    if (process.platform !== "win32" && (st.mode & 0o077) !== 0) {
+      options.onWarning?.(
+        `${resolved} has loose permissions (mode ${(st.mode & 0o777).toString(8)}). Run: chmod 600 ${resolved}`,
+      );
+    }
   } catch {
-    return M3SecretsSchema.parse({});
+    /* stat failed; let readFileSync surface the real error */
+  }
+  let text: string;
+  try {
+    text = fs.readFileSync(resolved, "utf8");
+  } catch (err) {
+    if (options.tolerant) return M3SecretsSchema.parse({});
+    throw new SecretsParseError(resolved, err);
+  }
+  try {
+    const raw = JSON.parse(text) as unknown;
+    return M3SecretsSchema.parse(raw);
+  } catch (err) {
+    if (options.tolerant) return M3SecretsSchema.parse({});
+    throw new SecretsParseError(resolved, err);
   }
 }
 
@@ -50,3 +101,26 @@ export const M3SecretsExample = {
     anthropic: { apiKey: "sk-ant-your-key" },
   },
 } as const;
+
+/**
+ * Heuristic placeholder detector for API keys. `doctor` and the
+ * first-call error path use this so a user who never edited
+ * secrets.json sees a clear "replace the example value" error
+ * instead of a generic 401 from the provider.
+ */
+const PLACEHOLDER_PATTERNS = [
+  /your[-_]/i,
+  /^sk-(your|example|placeholder|test|xxx)/i,
+  /^sk-ant-your/i,
+  /^(your|example|placeholder|changeme|todo|fix[-_]?me|xxx+)$/i,
+  /placeholder/i,
+  /\bexample\b/i,
+];
+
+export function looksLikePlaceholderKey(value: string | undefined | null): boolean {
+  if (value === undefined || value === null) return false;
+  const trimmed = value.trim();
+  if (!trimmed) return true; // configured but empty == placeholder
+  if (trimmed.length < 12) return true;
+  return PLACEHOLDER_PATTERNS.some((re) => re.test(trimmed));
+}
